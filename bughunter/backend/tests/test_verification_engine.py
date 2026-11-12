@@ -57,3 +57,4 @@ class TestVerificationEngine:
         res = asyncio.run(verification_engine.verify_endpoint("http://169.254.169.254/latest/meta-data/", rules))
         assert res.success is False
         assert res.scope_valid is False
+

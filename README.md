@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>Autonomous Bug Bounty Reconnaissance & Vulnerability Analysis Platform</strong><br>
-  <em>AI-powered · Deterministic Scope Enforcement · Batch Hunting · Persistent Queue · Linux-Native Tool Management</em>
+  <em>AI-powered · Deterministic Scope Enforcement · Process Cancellation · Verification Engine · Kali Linux Native</em>
 </p>
 
 <p align="center">
@@ -12,15 +12,38 @@
   <img src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white" alt="Vite" />
   <img src="https://img.shields.io/badge/TailwindCSS-v4-38B2AC?logo=tailwindcss&logoColor=white" alt="Tailwind v4" />
   <img src="https://img.shields.io/badge/Kali_Linux-Ready-557C94?logo=kalilinux&logoColor=white" alt="Kali Linux Ready" />
+  <img src="https://img.shields.io/badge/Tests-46%20Passed%20(100%25)-brightgreen" alt="Tests 46 Passed" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License" />
 </p>
 
 ---
 
+## 🚀 Latest Update: Safety, Verification & Reliability Hardening
+
+In response to the comprehensive Technical Review Report, BugHunter AI has completed **Phase 1 through Phase 4** hardening:
+
+- **🛡️ Strict Wildcard & Scope Semantics (§1.1)**: Wildcard rules like `*.example.com` strictly encompass subdomains (`api.example.com`, `admin.sub.example.com`). Root apex domains (`example.com`) are **not** inferred to be in-scope unless explicitly listed.
+- **🚫 Automated SSRF & Cloud Metadata Defense (§1.1)**: Target validation deterministically blocks loopbacks (`127.0.0.1`), RFC1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), and AWS/GCP/Azure instance metadata (`169.254.169.254`) unless explicitly covered by a dedicated CIDR rule.
+- **🔄 HTTP 3xx Redirect Scope Validation (§1.1)**: Every redirect hop is inspected in real-time. If an asset redirects out-of-scope or toward private metadata, the chain is safely terminated.
+- **🛑 Process-Level Task Cancellation (§1.2)**: New `ProcessTracker` registers child tool processes (`subfinder`, `httpx`, `katana`, `nuclei`) and executes deterministic OS-level process tree termination (`taskkill /F /T` on Windows, `SIGKILL` process groups on Linux) whenever a scan is stopped.
+- **🔍 Verification Engine & Status Gating (§1.3, §4.4)**: New `VerificationEngine` performs safe, non-destructive HTTP verification checks with reproducible `curl` generation and SHA-256 evidence hashing. Transitioning findings to `verified` requires:
+  1. An impact explanation note ($\ge$ 10 chars).
+  2. Confirmed target scope revalidation.
+  3. A reproducible test (`curl` command or reproduction steps).
+  4. Raw HTTP request/response evidence (preventing raw scanner labels from acting as verified bugs).
+  5. Human analyst authorization.
+- **🔐 WebSocket Ownership Authorization (§1.4)**: Real-time scan log subscriptions now validate JWTs and enforce user-to-scan ownership or admin roles.
+- **📄 Evidence-Grounded Reporting (§1.5, §4.6)**: Reports are strictly generated as **DRAFT — HUMAN REVIEW REQUIRED** with authentic HTTP artifacts, CVSS v3.1 calculations (never fabricated), and complete researcher checklists.
+- **🐧 Resilient Linux/Kali Setup (§2.1)**: Setup scripts auto-detect and recreate Windows-copied virtual environments, pin Go security tools to verified versions, and execute functional self-tests.
+- **🧪 46-Test Automated Suite (§2.4, §6)**: Built `run_tests.py` covering scope validation, process tracking, verification engine, and report generation with **100% test pass rate**.
+
+---
+
 ## 📑 Table of Contents
-- [🌟 Key Features](#-key-features)
+- [🌟 Key Capabilities](#-key-capabilities)
 - [🖥️ Web Control Dashboard (14 Pages)](#️-web-control-dashboard-14-pages)
 - [📦 Batch Hunting Center (§10)](#-batch-hunting-center-10)
+- [🛡️ Verification Engine & Evidence Collection](#️-verification-engine--evidence-collection)
 - [🛠️ Linux Native Tool Manager](#️-linux-native-tool-manager)
 - [🔒 Safety & Scope Controls](#-safety--scope-controls)
 - [🤖 AI Engine Configuration](#-ai-engine-configuration)
@@ -28,18 +51,18 @@
   - [Mode 1: Windows Local Dev (No Docker Required)](#mode-1-windows-local-development-no-docker-needed)
   - [Mode 2: Kali Linux / Ubuntu (VirtualBox or Bare Metal)](#mode-2-kali-linux--ubuntu-virtualbox-or-bare-metal)
   - [Mode 3: Production Docker Deployment](#mode-3-docker-compose-production)
-- [🧪 Testing & Verification](#-testing--verification)
+- [🧪 Running the Automated Test Suite](#-running-the-automated-test-suite)
 - [🔄 How to Push Changes to GitHub](#-how-to-push-changes-to-github)
 - [⚖️ Ethical Disclosure & Legal Disclaimer](#️-ethical-disclosure--legal-disclaimer)
 
 ---
 
-## 🌟 Key Features
+## 🌟 Key Capabilities
 
 - **🚀 Autonomous Pipeline**: Orchestrates discovery from passive subdomain resolution, active probing, and endpoint spidering through to automated non-destructive vulnerability assessment.
 - **🛡️ 100% Deterministic Scope Validation**: Scope decisions are executed strictly in pure Python (`ipaddress` and RFC-compliant domain matching). **AI is never permitted to decide or validate scope.** Exclusions always take precedence.
 - **📦 Batch Hunting & Queue System (§10)**: Import and process 100+ authorized targets simultaneously via TXT, CSV, JSON, or manual multiline input through a persistent background job queue.
-- **🛑 Global Emergency Stop**: Instant kill-switch that halts all queue dispatching, terminates active tool sub-processes, severs outbound network egress, and records immutable audit events.
+- **🛑 Real Process Kill Stop**: Stopping a scan terminates the underlying tool process immediately via OS process trees, rather than merely flipping a UI flag.
 - **🐧 Native Linux Tool Manager**: Fully automated detection, installation, version checking, and execution of 12 industry-standard security tools natively inside Linux / Kali Linux.
 - **🤖 Universal AI Triage Engine**: Direct integration with OpenAI-compatible APIs (OpenAI `gpt-4o-mini`, OpenRouter, Groq, or 100% offline local Ollama). Performs deduplication, CVSS calculation, and reproduction step drafting.
 - **📊 Professional Reporting**: One-click generation of HackerOne- and Bugcrowd-compliant vulnerability disclosure reports in Markdown, PDF, JSON, CSV, and HTML formats.
@@ -92,24 +115,35 @@ Before any target enters the execution queue, it must pass individual validation
 
 ---
 
+## 🛡️ Verification Engine & Evidence Collection
+
+Raw scanner alerts are treated as **unverified candidates** until substantiated:
+
+1. **Non-Destructive Testing**: `VerificationEngine` re-validates targets using safe HTTP requests (GET/HEAD) with strict redirect-hop scope gating.
+2. **Reproducible `curl` Commands**: Every finding stores copy-paste ready `curl` commands formatted with all relevant headers and data.
+3. **Cryptographic Hashes**: SHA-256 hashes are calculated and stored for all raw request and response payloads to ensure evidence integrity.
+4. **Human Verification**: Transitioning a finding to `verified` requires human analyst review, an impact note ($\ge$ 10 chars), confirmed scope, and real HTTP evidence.
+
+---
+
 ## 🛠️ Linux Native Tool Manager
 
-BugHunter AI manages and verifies **12 core security tools** directly from official upstream sources:
+BugHunter AI manages and verifies **12 core security tools** directly from official upstream sources with pinned versions for build reproducibility:
 
-| Tool | Category | Installation Method |
-|---|---|---|
-| **`subfinder`** | Passive Subdomains | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
-| **`dnsx`** | DNS Toolkit | `go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
-| **`httpx`** | HTTP Probe | `go install github.com/projectdiscovery/httpx/cmd/httpx@latest` |
-| **`katana`** | Web Crawler | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
-| **`naabu`** | Port Scanner | `go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
-| **`nuclei`** | Vuln Scanner | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
-| **`gau`** | URL Discovery | `go install github.com/lc/gau/v2/cmd/gau@latest` |
-| **`waybackurls`** | Archive URLs | `go install github.com/tomnomnom/waybackurls@latest` |
-| **`ffuf`** | Web Fuzzing | `go install github.com/ffuf/ffuf/v2@latest` |
-| **`dalfox`** | XSS Scanner | `go install github.com/hahwul/dalfox/v2@latest` |
-| **`sqlmap`** | SQL Injection | `pipx install sqlmap` or `apt install sqlmap` |
-| **`amass`** | Attack Surface | `go install github.com/owasp-amass/amass/v4/...@latest` |
+| Tool | Category | Verified Version | Installation Command |
+|---|---|---|---|
+| **`subfinder`** | Passive Subdomains | `v2.6.8` | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.8` |
+| **`dnsx`** | DNS Toolkit | `v1.1.7` | `go install github.com/projectdiscovery/dnsx/cmd/dnsx@v1.1.7` |
+| **`httpx`** | HTTP Probe | `v1.6.9` | `go install github.com/projectdiscovery/httpx/cmd/httpx@v1.6.9` |
+| **`katana`** | Web Crawler | `v1.1.0` | `go install github.com/projectdiscovery/katana/cmd/katana@v1.1.0` |
+| **`naabu`** | Port Scanner | `v2.3.1` | `go install github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.3.1` |
+| **`nuclei`** | Vuln Scanner | `v3.3.7` | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.7` |
+| **`gau`** | URL Discovery | `v2.2.3` | `go install github.com/lc/gau/v2/cmd/gau@v2.2.3` |
+| **`waybackurls`** | Archive URLs | `latest` | `go install github.com/tomnomnom/waybackurls@latest` |
+| **`ffuf`** | Web Fuzzing | `v2.1.0` | `go install github.com/ffuf/ffuf/v2@v2.1.0` |
+| **`dalfox`** | XSS Scanner | `v2.9.2` | `go install github.com/hahwul/dalfox/v2@v2.9.2` |
+| **`sqlmap`** | SQL Injection | `apt / pipx` | `pipx install sqlmap` or `sudo apt install sqlmap` |
+| **`amass`** | Attack Surface | `v4.2.0` | `go install github.com/owasp-amass/amass/v4/...@v4.2.0` |
 
 ---
 
@@ -119,9 +153,10 @@ BugHunter AI manages and verifies **12 core security tools** directly from offic
 > BugHunter AI strictly adheres to the core rules of authorized bug bounty operations:
 > 1. **Zero LLM Scope Validation**: AI is **never** permitted to evaluate or decide scope. All scope checks use deterministic Python matching.
 > 2. **Exclusions Always Win**: If a target matches any exclusion rule, it is immediately denied regardless of wildcard allowances.
-> 3. **Human-in-the-Loop Active Verification**: High-impact or active payloads require explicit approval via `/approvals`.
-> 4. **No Auto-Submission**: Reports are generated for human review and are never submitted to bug bounty platforms automatically.
-> 5. **Append-Only Audit Log**: Every tool invocation, scope check, and approval decision is immutably recorded.
+> 3. **Private IP & Cloud Metadata Defense**: RFC1918 and AWS/GCP/Azure instance metadata IPs (`169.254.169.254`) are strictly blocked.
+> 4. **Human-in-the-Loop Active Verification**: High-impact or active payloads require explicit approval via `/approvals`.
+> 5. **No Auto-Submission**: Reports are generated for human review and are never submitted to bug bounty platforms automatically.
+> 6. **Append-Only Audit Log**: Every tool invocation, scope check, and approval decision is immutably recorded.
 
 ---
 
@@ -185,7 +220,7 @@ When running inside a Kali Linux virtual machine:
 git clone https://github.com/BOnzai58-lab/buzzzzgs.git
 cd buzzzzgs/bughunter
 
-# 2. Install all 12 tools and dependencies automatically
+# 2. Install all 12 tools and dependencies automatically (pinned versions)
 chmod +x scripts/install_kali.sh
 ./scripts/install_kali.sh
 
@@ -206,39 +241,34 @@ For complete multi-user background worker execution with PostgreSQL 16 and Redis
 ```bash
 cd bughunter
 cp .env.example .env
+# Edit .env and configure strong POSTGRES_PASSWORD and SECRET_KEY
 docker compose up -d
 ```
 
-Containers launched:
-- `backend`: FastAPI API server on port 8000
-- `frontend`: Nginx serving built React app on port 3000
-- `celery_worker`: Background security tool worker
-- `celery_beat`: Cron scheduler for passive monitoring
-- `db`: PostgreSQL 16
-- `redis`: Redis 7 message broker
+- All services are bound to `127.0.0.1` by default to prevent external exposure.
+- Automated health checks monitor database readiness and Redis ping.
 
 ---
 
-## 🧪 Testing & Verification
+## 🧪 Running the Automated Test Suite
 
-Run the full end-to-end integration test suite:
+BugHunter AI includes an automated unit and integration test suite:
 
 ```bash
 cd bughunter/backend
-.venv/bin/python scratch/test_chapter10.py   # Linux / Kali
-# Or on Windows:
-.venv\Scripts\python.exe scratch\test_chapter10.py
+
+# Run the 46-test verification suite
+python run_tests.py
+# Or with virtual environment python:
+.venv/bin/python run_tests.py        # Linux / Kali
+.venv\Scripts\python.exe run_tests.py # Windows
 ```
 
-The automated test suite verifies:
-1. Admin authentication & JWT token generation.
-2. Program creation & deterministic scope rule evaluation.
-3. Multi-format batch target import (TXT, CSV, JSON).
-4. Intra-batch duplicate rejection.
-5. Exclusion-first validation precedence.
-6. Persistent queue creation, pause, resume, and cancellation.
-7. Global Emergency Stop triggering and release.
-8. Multi-format summary report generation.
+The test runner covers:
+1. **Scope Validator & SSRF**: Wildcard isolation, apex domain rules, IDN punycode, URL decoding, RFC1918 blocks, cloud metadata blocks, and redirect validation.
+2. **Process Tracker**: Tool process registration, timeout handling, and OS-level termination.
+3. **Verification Engine**: Curl reproduction command synthesis, redirect validation, and SHA-256 evidence hashing.
+4. **Report Generator**: Markdown draft enforcement, CVSS accuracy, and missing evidence warnings.
 
 ---
 
