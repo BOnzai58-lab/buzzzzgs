@@ -74,6 +74,18 @@ class TestNormalization:
         v = ScopeValidator()
         assert v.normalize_target("") == ""
 
+    def test_idn_punycode_normalized(self):
+        v = ScopeValidator()
+        assert v.normalize_target("münchen.de") == "xn--mnchen-3ya.de"
+
+    def test_url_encoded_target_normalized(self):
+        v = ScopeValidator()
+        assert v.normalize_target("https%3A%2F%2Fsub.target.com%3A443%2Fapi") == "sub.target.com"
+
+    def test_trailing_dot_stripped(self):
+        v = ScopeValidator()
+        assert v.normalize_target("sub.target.com.") == "sub.target.com"
+
     def test_lowercase(self):
         v = ScopeValidator()
         assert v.normalize_target("UPPER.EXAMPLE.COM") == "upper.example.com"
@@ -90,9 +102,16 @@ class TestWildcardMatching:
         r = scope_validator.validate_target("v2.api.target.com", basic_rules)
         assert r.allowed is True
 
-    def test_root_domain_allowed(self, basic_rules):
-        # *.target.com should include target.com root (the wildcard base)
+    def test_root_domain_not_automatically_included_in_wildcard(self, basic_rules):
+        """Per Review Report §1.1: *.target.com should NOT automatically include target.com."""
         r = scope_validator.validate_target("target.com", basic_rules)
+        assert r.allowed is False
+
+    def test_root_domain_allowed_when_explicitly_listed(self):
+        """When program explicitly lists target.com as an exact domain rule, it is allowed."""
+        rules = [rule("wildcard", "*.target.com"), rule("domain", "target.com")]
+        r = scope_validator.validate_target("target.com", rules)
+        assert r.allowed is True
         assert r.allowed is True
 
     def test_attacker_suffix_denied(self, basic_rules):
@@ -255,3 +274,4 @@ class TestReservedIPCheck:
     ])
     def test_public_ips_are_not_reserved(self, ip):
         assert ScopeValidator.is_reserved_or_private_ip(ip) is False
+

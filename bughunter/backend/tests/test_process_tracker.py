@@ -86,3 +86,4 @@ class TestProcessTracker:
             cmd = ["echo", "done"]
         ProcessTracker.run_cancellable(cmd, task_id, timeout=10)
         assert task_id not in _ACTIVE_PROCESSES
+

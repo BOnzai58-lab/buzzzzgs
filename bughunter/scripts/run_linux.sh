@@ -18,13 +18,21 @@ echo "================================================================"
 # Get VM IP Address
 VM_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 
-# 1. Setup Backend Virtual Environment if needed
-if [ ! -d "backend/.venv" ]; then
-    echo "[*] Creating Python virtual environment in backend/.venv..."
+# 1. Setup Backend Virtual Environment
+# Robust check: if backend/.venv is missing or from Windows (lacks bin/python), recreate cleanly
+if [ ! -x "backend/.venv/bin/python" ]; then
+    echo "[*] Creating native Linux Python virtual environment in backend/.venv..."
+    rm -rf backend/.venv
     python3 -m venv backend/.venv
     backend/.venv/bin/pip install --upgrade pip --quiet
     echo "[*] Installing backend requirements..."
     backend/.venv/bin/pip install -r backend/requirements.txt --quiet
+else
+    # Verify core dependencies are actually installed and functional
+    if ! backend/.venv/bin/python -c "import fastapi, sqlalchemy, uvicorn, pydantic" >/dev/null 2>&1; then
+        echo "[*] Virtualenv exists but has missing dependencies. Re-installing requirements..."
+        backend/.venv/bin/pip install -r backend/requirements.txt --quiet
+    fi
 fi
 
 # Ensure database tables exist

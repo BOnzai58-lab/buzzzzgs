@@ -96,6 +96,12 @@ def run_subdomain_scan(self: Task, scan_id: str, program_id: str, targets: list[
 
         all_subdomains = set()
         for i, domain in enumerate(valid_domains):
+            # Check for worker cancellation (§1.2)
+            cur_scan = db.get(Scan, uuid.UUID(scan_id))
+            if cur_scan and cur_scan.status in ("stopped", "failed"):
+                _publish_log(scan_id, "WARN", "Subdomain enumeration halted: scan was stopped.")
+                return
+
             _publish_log(scan_id, "INFO", f"Enumerating subdomains for: {domain}")
             if shutil.which("subfinder"):
                 code, stdout, stderr = _run_tool(["subfinder", "-d", domain, "-silent", "-json"], task_id=scan_id)
@@ -174,6 +180,12 @@ def run_probe_scan(self: Task, scan_id: str, program_id: str, targets: list[str]
             tmpfile = f.name
 
         saved = 0
+        cur_scan = db.get(Scan, uuid.UUID(scan_id))
+        if cur_scan and cur_scan.status in ("stopped", "failed"):
+            os.unlink(tmpfile)
+            _publish_log(scan_id, "WARN", "Probe scan cancelled before tool execution.")
+            return
+
         if shutil.which("httpx"):
             code, stdout, stderr = _run_tool(
                 ["httpx", "-l", tmpfile, "-json", "-title", "-tech-detect", "-status-code", "-silent"],
@@ -243,6 +255,12 @@ def run_crawl_scan(self: Task, scan_id: str, program_id: str, targets: list[str]
 
         saved = 0
         for url in valid_targets:
+            # Check for worker cancellation (§1.2)
+            cur_scan = db.get(Scan, uuid.UUID(scan_id))
+            if cur_scan and cur_scan.status in ("stopped", "failed"):
+                _publish_log(scan_id, "WARN", "Crawl halted: scan was stopped.")
+                return
+
             asset_domain = scope_validator.normalize_target(url)
             asset = db.query(Asset).filter(Asset.program_id == uuid.UUID(program_id), Asset.domain == asset_domain).first()
             if not asset:
@@ -351,6 +369,13 @@ def run_vuln_scan(self: Task, scan_id: str, program_id: str, targets: list[str])
             nuclei_version = (vr.stdout or vr.stderr or "").strip().split("\n")[0][:50]
         except Exception:
             pass
+
+        # Pre-execution cancellation check (§1.2)
+        cur_scan = db.get(Scan, uuid.UUID(scan_id))
+        if cur_scan and cur_scan.status in ("stopped", "failed"):
+            os.unlink(tmpfile)
+            _publish_log(scan_id, "WARN", "Vulnerability scan cancelled before tool execution.")
+            return
 
         # Safe non-destructive scanning: exclude DoS, fuzzing, and brute force templates
         nuclei_cmd = [

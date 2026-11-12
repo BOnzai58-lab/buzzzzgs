@@ -82,19 +82,19 @@ done
 # 4. Install 12 Core Security Tools
 echo -e "\n${CYAN}[*] Installing 12 Core Security Tools...${NC}"
 
-# Go Tools List
+# Go Tools List — pinned versions with fallback for reproducibility (§2.1)
 declare -A GO_TOOLS=(
-    ["subfinder"]="github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
-    ["dnsx"]="github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
-    ["httpx"]="github.com/projectdiscovery/httpx/cmd/httpx@latest"
-    ["katana"]="github.com/projectdiscovery/katana/cmd/katana@latest"
-    ["naabu"]="github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"
-    ["nuclei"]="github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
-    ["gau"]="github.com/lc/gau/v2/cmd/gau@latest"
+    ["subfinder"]="github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.8"
+    ["dnsx"]="github.com/projectdiscovery/dnsx/cmd/dnsx@v1.1.7"
+    ["httpx"]="github.com/projectdiscovery/httpx/cmd/httpx@v1.6.9"
+    ["katana"]="github.com/projectdiscovery/katana/cmd/katana@v1.1.0"
+    ["naabu"]="github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.3.1"
+    ["nuclei"]="github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.3.7"
+    ["gau"]="github.com/lc/gau/v2/cmd/gau@v2.2.3"
     ["waybackurls"]="github.com/tomnomnom/waybackurls@latest"
-    ["ffuf"]="github.com/ffuf/ffuf/v2@latest"
-    ["dalfox"]="github.com/hahwul/dalfox/v2@latest"
-    ["amass"]="github.com/owasp-amass/amass/v4/...@latest"
+    ["ffuf"]="github.com/ffuf/ffuf/v2@v2.1.0"
+    ["dalfox"]="github.com/hahwul/dalfox/v2@v2.9.2"
+    ["amass"]="github.com/owasp-amass/amass/v4/...@v4.2.0"
 )
 
 for tool in "${!GO_TOOLS[@]}"; do
@@ -146,5 +146,8 @@ for t in "${ALL_TOOLS[@]}"; do
 done
 
 echo -e "\n${GREEN}[+] Verification complete: $INSTALLED / ${#ALL_TOOLS[@]} tools installed and ready.${NC}"
+if [ "$INSTALLED" -lt "${#ALL_TOOLS[@]}" ]; then
+    echo -e "${YELLOW}[!] Note: $(( ${#ALL_TOOLS[@]} - INSTALLED )) optional/core tools missing. BugHunter AI will operate with available tools or fallback modes.${NC}"
+fi
 echo -e "${YELLOW}[!] Make sure to reload your shell: source ~/.bashrc${NC}"
 echo -e "${CYAN}================================================================${NC}"

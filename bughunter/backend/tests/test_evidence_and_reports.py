@@ -194,3 +194,4 @@ class TestReportChecklist:
         assert "Review Checklist" in md
         assert "manually reproduced" in md.lower()
         assert "in-scope" in md.lower()
+

@@ -20,7 +20,7 @@ import ipaddress
 import socket
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 from uuid import UUID
 
 from loguru import logger
@@ -63,15 +63,28 @@ class ScopeValidator:
     def normalize_target(target: str) -> str:
         """Extract clean hostname/IP from URL, hostname:port, or raw input.
         
+        Handles:
+          - URL decoding (e.g. %3A%2F%2F)
+          - Protocol and port stripping
+          - Userinfo stripping (user:pass@host)
+          - IDN punycode normalization (e.g. münchen.de -> xn--mnchen-3ya.de)
+          - FQDN trailing dot removal
+        
         Examples:
           'https://sub.example.com:8080/path?q=1' -> 'sub.example.com'
           'http://admin@10.0.0.1:80/'            -> '10.0.0.1'
           'api.example.com:443'                  -> 'api.example.com'
-          '*.example.com'                        -> '*.example.com'
+          '*.example.com.'                       -> '*.example.com'
+          'sub.example.com.'                     -> 'sub.example.com'
         """
         if not target:
             return ""
-        target = target.strip().lower()
+        # Handle URL encoded targets
+        target = unquote(target.strip()).lower()
+
+        # Strip trailing dot if FQDN
+        if target.endswith(".") and not target.endswith(".."):
+            target = target[:-1]
 
         # Handle wildcard pattern prefix if present
         is_wildcard = target.startswith("*.")
@@ -106,6 +119,13 @@ class ScopeValidator:
             host = host.split(":")[0]
         elif host.startswith("[") and "]" in host:
             host = host.split("]")[0].lstrip("[")
+
+        # Normalize IDN / Internationalized Domain Names to punycode
+        if host and not any(host.startswith(c) for c in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "[", ":")):
+            try:
+                host = host.encode("idna").decode("ascii")
+            except Exception:
+                pass
 
         if is_wildcard:
             return f"*.{host}"
@@ -356,21 +376,26 @@ class ScopeValidator:
 
     @staticmethod
     def _match_domain(target: str, value: str) -> bool:
-        """Exact domain match or wildcard pattern stored under domain."""
+        """Exact domain match (case-insensitive)."""
         if value.startswith("*."):
             suffix = value[2:]
-            return target == suffix or target.endswith("." + suffix)
+            return target.endswith("." + suffix)
         return target == value
 
     @staticmethod
-    def _match_wildcard(target: str, value: str) -> bool:
+    def _match_wildcard(target: str, value: str, include_apex: bool = False) -> bool:
         """Match ``*.example.com`` style wildcards with strict subdomain boundary.
         
-        Example:
+        Per Review Report §1.1:
+          A rule for *.example.com covers subdomains (e.g. sub.example.com, api.sub.example.com).
+          It does NOT automatically include the apex/root domain (example.com) unless
+          explicitly configured or covered by a distinct rule.
+        
+        Examples:
           *.example.com:
             - sub.example.com -> True
             - deep.sub.example.com -> True
-            - example.com -> True (root of wildcard)
+            - example.com -> False (apex domain requires explicit program listing)
             - evil-example.com -> False
             - example.com.attacker.com -> False
         """
@@ -378,12 +403,9 @@ class ScopeValidator:
             return target == value
         suffix = value[2:]  # e.g. "example.com"
         
-        # Must be exact match OR end with '.' + suffix
-        if target == suffix:
+        if include_apex and target == suffix:
             return True
-        if target.endswith("." + suffix):
-            return True
-        return False
+        return target.endswith("." + suffix)
 
     @classmethod
     def _match_cidr(cls, target: str, value: str) -> bool:

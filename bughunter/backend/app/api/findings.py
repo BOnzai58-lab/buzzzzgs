@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_db
 from app.core.security import get_current_user, require_role
-from app.models.all import Finding, Evidence, ValidationHistory, AIAnalysis, Report, ApprovalRequest, User, FindingStatus
+from app.models.all import (
+    Finding, Evidence, ValidationHistory, AIAnalysis, Report, ApprovalRequest,
+    User, FindingStatus, ScopeRule, EvidenceKind
+)
+from app.scope.validator import scope_validator
 from app.schemas import (
     FindingResponse, FindingStatusUpdate, EvidenceResponse,
     AIAnalysisResponse, ReportResponse, ApprovalResponse,
@@ -55,11 +59,44 @@ async def update_finding_status(
     if not f:
         raise HTTPException(404, "Finding not found")
 
-    # Verified status requires evidence + human actor (not AI)
+    # Strict verification gating (Review Report §1.3 & §4.4)
     if body.status == FindingStatus.verified:
-        evidence = await db.execute(select(Evidence).where(Evidence.finding_id == finding_id))
-        if not evidence.scalars().first():
-            raise HTTPException(400, "Cannot mark verified without evidence")
+        # 1. Require impact explanation note
+        if not body.note or len(body.note.strip()) < 10:
+            raise HTTPException(400, "Verification requires an impact explanation note (minimum 10 characters).")
+
+        # 2. Confirmed scope
+        rules_res = await db.execute(select(ScopeRule).where(ScopeRule.program_id == f.program_id))
+        rules = rules_res.scalars().all()
+        matched_target = f.scope_result.get("matched_at", "")
+        if matched_target:
+            sr = scope_validator.validate_target(matched_target, rules)
+            if not sr.allowed:
+                raise HTTPException(400, f"Cannot verify finding: target '{matched_target}' is out of scope ({sr.reason}).")
+
+        # 3. Require relevant evidence (not just scanner label)
+        evidence_res = await db.execute(select(Evidence).where(Evidence.finding_id == finding_id))
+        ev_items = evidence_res.scalars().all()
+        if not ev_items:
+            raise HTTPException(400, "Cannot mark verified without collected evidence.")
+
+        has_reproducible_test = any(
+            bool(e.curl_command or e.reproduction_steps) or bool(f.scope_result.get("curl_command"))
+            for e in ev_items
+        )
+        if not has_reproducible_test:
+            raise HTTPException(400, "Verification requires a reproducible test (curl command or reproduction steps).")
+
+        has_req_or_resp = any(
+            e.kind in (EvidenceKind.request, EvidenceKind.response) or bool(e.raw_request or e.raw_response)
+            for e in ev_items
+        )
+        if not has_req_or_resp:
+            raise HTTPException(400, "Verification requires relevant HTTP request/response evidence, not just raw scanner alert.")
+
+        # Mark evidence as verified by human reviewer
+        for e in ev_items:
+            e.is_verified_by_human = True
 
     old_status = f.status
     f.status = body.status

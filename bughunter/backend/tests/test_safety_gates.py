@@ -108,3 +108,4 @@ class TestRedirectSafetyGates:
             rule("exclude", "legacy.authorized.com"),
         ]
         assert self._run_redirect_gate("app.authorized.com", "https://legacy.authorized.com", rules) is False
+
