@@ -1,19 +1,30 @@
 version: "3.9"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# BugHunter AI — Docker Compose
+#
+# SECURITY: Never commit real credentials to source control.
+# Copy .env.example to .env and fill in your secrets before deploying.
+#
+# Review report §2.2: Use configurable secrets, bind services to intended local
+# interfaces, and avoid exposing databases or Redis unnecessarily.
+# ──────────────────────────────────────────────────────────────────────────────
+
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: bughunter
-      POSTGRES_PASSWORD: bughunter
-      POSTGRES_DB: bughunter
+      POSTGRES_USER: ${POSTGRES_USER:-bughunter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-bughunter}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Bind to localhost only — do not expose DB port to external interfaces
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bughunter"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bughunter}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,8 +32,10 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-}
+    # Bind to localhost only — do not expose Redis to external interfaces
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -36,7 +49,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -44,8 +57,14 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - evidence_data:/app/evidence
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      - evidence_data:/app/data/evidence
+      - report_data:/app/data/reports
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   celery_worker:
     build:
@@ -60,8 +79,8 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - evidence_data:/app/evidence
-    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4
+      - evidence_data:/app/data/evidence
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=50
 
   celery_beat:
     build:
@@ -84,11 +103,11 @@ services:
       dockerfile: ../infra/Dockerfile.frontend
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
     depends_on:
       - backend
 
 volumes:
   postgres_data:
   evidence_data:
-
+  report_data:

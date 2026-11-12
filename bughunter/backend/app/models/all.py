@@ -465,12 +465,18 @@ class Evidence(Base):
     kind: Mapped[EvidenceKind] = mapped_column(
         Enum(EvidenceKind, name="evidence_kind"), nullable=False
     )
-    content_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_ref: Mapped[str] = mapped_column(String(2048), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     collected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )
     collected_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Extended fields for reproducible evidence (§1.3, §4.4)
+    raw_request: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    curl_command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reproduction_steps: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_verified_by_human: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Relationships
     finding: Mapped["Finding"] = relationship("Finding", back_populates="evidence")

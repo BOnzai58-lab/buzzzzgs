@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from celery import Task
 from loguru import logger
 from app.core.celery_app import celery_app
+from app.core.process_tracker import process_tracker
 
 
 def _db_session():
@@ -34,8 +35,12 @@ def _publish_log(scan_id: str, level: str, message: str):
     r.close()
 
 
-def _run_tool(cmd: list[str], timeout: int = 300) -> tuple[int, str, str]:
-    """Run an external tool. Returns (exit_code, stdout, stderr)."""
+def _run_tool(cmd: list[str], task_id: str | None = None, timeout: int = 300) -> tuple[int, str, str]:
+    """Run an external tool with process registration and deterministic cancellation.
+    Returns (exit_code, stdout, stderr).
+    """
+    if task_id:
+        return process_tracker.run_cancellable(cmd, task_id, timeout=timeout)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return result.returncode, result.stdout, result.stderr
@@ -76,11 +81,24 @@ def run_subdomain_scan(self: Task, scan_id: str, program_id: str, targets: list[
         rules = db.query(ScopeRule).filter(ScopeRule.program_id == program.id).all()
         domains = targets if targets else [r.value.lstrip("*.") for r in rules if r.kind in ("domain", "wildcard")]
 
+        valid_domains = []
+        for d in domains:
+            sr = scope_validator.validate_target(d, rules)
+            if sr.allowed:
+                valid_domains.append(d)
+            else:
+                _publish_log(scan_id, "WARN", f"Skipping out-of-scope domain '{d}': {sr.reason}")
+
+        if not valid_domains:
+            _publish_log(scan_id, "WARN", "No in-scope domains to enumerate.")
+            _update_scan(db, scan_id, "done", 100)
+            return
+
         all_subdomains = set()
-        for i, domain in enumerate(domains):
+        for i, domain in enumerate(valid_domains):
             _publish_log(scan_id, "INFO", f"Enumerating subdomains for: {domain}")
             if shutil.which("subfinder"):
-                code, stdout, stderr = _run_tool(["subfinder", "-d", domain, "-silent", "-json"])
+                code, stdout, stderr = _run_tool(["subfinder", "-d", domain, "-silent", "-json"], task_id=scan_id)
                 if code == 0:
                     for line in stdout.strip().splitlines():
                         try:
@@ -93,7 +111,7 @@ def run_subdomain_scan(self: Task, scan_id: str, program_id: str, targets: list[
                 _publish_log(scan_id, "INFO", f"Subfinder found {len(all_subdomains)} subdomains so far")
             else:
                 _publish_log(scan_id, "WARN", "subfinder not found — skipping")
-            _update_scan(db, scan_id, "running", 10 + int(50 * (i + 1) / max(len(domains), 1)))
+            _update_scan(db, scan_id, "running", 10 + int(50 * (i + 1) / max(len(valid_domains), 1)))
 
         saved = 0
         for sub in all_subdomains:
@@ -133,8 +151,18 @@ def run_probe_scan(self: Task, scan_id: str, program_id: str, targets: list[str]
         _update_scan(db, scan_id, "running", 5)
         _publish_log(scan_id, "INFO", "Starting HTTP probing...")
 
+        rules = db.query(ScopeRule).filter(ScopeRule.program_id == uuid.UUID(program_id)).all()
         assets = db.query(Asset).filter(Asset.program_id == uuid.UUID(program_id), Asset.scope_status == "in_scope").all()
-        urls = targets if targets else [f"http://{a.domain}" for a in assets]
+        raw_urls = targets if targets else [f"http://{a.domain}" for a in assets]
+
+        # Safety: strictly filter every probe URL against scope rules and SSRF private IP check
+        urls = []
+        for u in raw_urls:
+            sr = scope_validator.validate_target(u, rules)
+            if sr.allowed:
+                urls.append(u)
+            else:
+                _publish_log(scan_id, "WARN", f"Skipping out-of-scope probe target '{u}': {sr.reason}")
 
         if not urls:
             _publish_log(scan_id, "WARN", "No in-scope assets to probe")
@@ -147,7 +175,10 @@ def run_probe_scan(self: Task, scan_id: str, program_id: str, targets: list[str]
 
         saved = 0
         if shutil.which("httpx"):
-            code, stdout, stderr = _run_tool(["httpx", "-l", tmpfile, "-json", "-title", "-tech-detect", "-status-code", "-silent"])
+            code, stdout, stderr = _run_tool(
+                ["httpx", "-l", tmpfile, "-json", "-title", "-tech-detect", "-status-code", "-silent"],
+                task_id=scan_id,
+            )
             for line in stdout.strip().splitlines():
                 try:
                     data = json.loads(line)
@@ -186,31 +217,50 @@ def run_probe_scan(self: Task, scan_id: str, program_id: str, targets: list[str]
 def run_crawl_scan(self: Task, scan_id: str, program_id: str, targets: list[str]):
     db = _db_session()
     try:
-        from app.models.all import LiveHost, Endpoint, Asset
+        from app.models.all import LiveHost, Endpoint, Asset, ScopeRule
+        from app.scope.validator import scope_validator
         import tempfile, os
 
         _update_scan(db, scan_id, "running", 5)
         _publish_log(scan_id, "INFO", "Starting crawl + endpoint discovery...")
 
+        rules = db.query(ScopeRule).filter(ScopeRule.program_id == uuid.UUID(program_id)).all()
+
         if not targets:
             hosts = db.query(LiveHost).join(Asset, Asset.id == LiveHost.asset_id).filter(Asset.program_id == uuid.UUID(program_id)).all()
-            targets = [h.url for h in hosts[:20]]  # limit crawl
+            raw_targets = [h.url for h in hosts[:20]]  # limit crawl
+        else:
+            raw_targets = targets
+
+        # Pre-validate all crawl targets
+        valid_targets = []
+        for u in raw_targets:
+            sr = scope_validator.validate_target(u, rules)
+            if sr.allowed:
+                valid_targets.append(u)
+            else:
+                _publish_log(scan_id, "WARN", f"Skipping out-of-scope crawl target '{u}': {sr.reason}")
 
         saved = 0
-        for url in targets:
-            asset_domain = url.split("://")[-1].split("/")[0].split(":")[0]
+        for url in valid_targets:
+            asset_domain = scope_validator.normalize_target(url)
             asset = db.query(Asset).filter(Asset.program_id == uuid.UUID(program_id), Asset.domain == asset_domain).first()
             if not asset:
                 continue
 
             if shutil.which("katana"):
                 _publish_log(scan_id, "INFO", f"Crawling: {url}")
-                code, stdout, _ = _run_tool(["katana", "-u", url, "-json", "-depth", "3", "-silent"])
+                code, stdout, _ = _run_tool(["katana", "-u", url, "-json", "-depth", "3", "-silent"], task_id=scan_id)
                 for line in stdout.strip().splitlines():
                     try:
                         data = json.loads(line)
                         ep_url = data.get("request", {}).get("endpoint", data.get("endpoint", ""))
                         if ep_url:
+                            # Re-verify discovered endpoint matches scope
+                            ep_sr = scope_validator.validate_target(ep_url, rules)
+                            if not ep_sr.allowed:
+                                continue
+
                             tags = []
                             if any(x in ep_url for x in ["/login", "/auth", "/signin"]):
                                 tags.append("auth")
@@ -234,10 +284,10 @@ def run_crawl_scan(self: Task, scan_id: str, program_id: str, targets: list[str]
 
             # Also run gau for historical URLs
             if shutil.which("gau"):
-                code, stdout, _ = _run_tool(["gau", asset_domain, "--threads", "5"])
+                code, stdout, _ = _run_tool(["gau", asset_domain, "--threads", "5"], task_id=scan_id)
                 for line in stdout.strip().splitlines():
                     ep_url = line.strip()
-                    if ep_url:
+                    if ep_url and scope_validator.validate_target(ep_url, rules).allowed:
                         ep = Endpoint(asset_id=asset.id, url=ep_url[:2000], source="gau", method="GET", tags=["history"])
                         db.add(ep)
                         saved += 1
@@ -257,18 +307,32 @@ def run_crawl_scan(self: Task, scan_id: str, program_id: str, targets: list[str]
 def run_vuln_scan(self: Task, scan_id: str, program_id: str, targets: list[str]):
     db = _db_session()
     try:
-        from app.models.all import LiveHost, Asset, Finding, Evidence, Severity, FindingStatus
+        from app.models.all import LiveHost, Asset, Finding, Evidence, Severity, FindingStatus, ScopeRule, EvidenceKind
+        from app.scope.validator import scope_validator
         import tempfile, os
 
         _update_scan(db, scan_id, "running", 5)
         _publish_log(scan_id, "INFO", "Starting vulnerability scan with Nuclei...")
 
-        if not targets:
-            hosts = db.query(LiveHost).join(Asset, Asset.id == LiveHost.asset_id).filter(Asset.program_id == uuid.UUID(program_id)).all()
-            targets = [h.url for h in hosts[:10]]
+        rules = db.query(ScopeRule).filter(ScopeRule.program_id == uuid.UUID(program_id)).all()
 
         if not targets:
-            _publish_log(scan_id, "WARN", "No targets for vulnerability scan")
+            hosts = db.query(LiveHost).join(Asset, Asset.id == LiveHost.asset_id).filter(Asset.program_id == uuid.UUID(program_id)).all()
+            raw_targets = [h.url for h in hosts[:15]]
+        else:
+            raw_targets = targets
+
+        # Pre-validate all vulnerability scan targets against scope & SSRF protections
+        valid_targets = []
+        for t in raw_targets:
+            sr = scope_validator.validate_target(t, rules)
+            if sr.allowed:
+                valid_targets.append(t)
+            else:
+                _publish_log(scan_id, "WARN", f"Skipping out-of-scope vuln target '{t}': {sr.reason}")
+
+        if not valid_targets:
+            _publish_log(scan_id, "WARN", "No in-scope targets for vulnerability scan")
             _update_scan(db, scan_id, "done", 100)
             return
 
@@ -278,7 +342,7 @@ def run_vuln_scan(self: Task, scan_id: str, program_id: str, targets: list[str])
             return
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("\n".join(targets))
+            f.write("\n".join(valid_targets))
             tmpfile = f.name
 
         nuclei_version = None
@@ -288,7 +352,18 @@ def run_vuln_scan(self: Task, scan_id: str, program_id: str, targets: list[str])
         except Exception:
             pass
 
-        code, stdout, stderr = _run_tool(["nuclei", "-l", tmpfile, "-json", "-silent", "-severity", "low,medium,high,critical"], timeout=600)
+        # Safe non-destructive scanning: exclude DoS, fuzzing, and brute force templates
+        nuclei_cmd = [
+            "nuclei",
+            "-l", tmpfile,
+            "-json",
+            "-silent",
+            "-severity", "low,medium,high,critical",
+            "-type", "http",
+            "-exclude-tags", "dos,fuzz,bruteforce,ddos",
+            "-rate-limit", "150",
+        ]
+        code, stdout, stderr = _run_tool(nuclei_cmd, task_id=scan_id, timeout=600)
         saved = 0
         for line in stdout.strip().splitlines():
             try:
@@ -306,8 +381,14 @@ def run_vuln_scan(self: Task, scan_id: str, program_id: str, targets: list[str])
                 if existing:
                     continue
 
-                asset_domain = matched_at.split("://")[-1].split("/")[0].split(":")[0]
+                asset_domain = scope_validator.normalize_target(matched_at)
                 asset = db.query(Asset).filter(Asset.domain == asset_domain).first()
+
+                # Extract reproducible curl and request/response artifacts
+                curl_cmd = data.get("curl-command") or f"curl -i -s -k '{matched_at}'"
+                raw_request = data.get("request", "")
+                raw_response = data.get("response", "")
+                extracted = data.get("extracted-results", [])
 
                 finding = Finding(
                     program_id=uuid.UUID(program_id),
@@ -320,22 +401,48 @@ def run_vuln_scan(self: Task, scan_id: str, program_id: str, targets: list[str])
                     template_id=template_id,
                     status=FindingStatus.potential,
                     dedup_key=dedup_key,
-                    scope_result={"matched_at": matched_at},
+                    scope_result={
+                        "matched_at": matched_at,
+                        "curl_command": curl_cmd,
+                        "extracted_results": extracted,
+                        "cwe": data.get("info", {}).get("classification", {}).get("cwe-id", []),
+                        "cvss_score": data.get("info", {}).get("classification", {}).get("cvss-score", None),
+                        "cvss_metrics": data.get("info", {}).get("classification", {}).get("cvss-metrics", None),
+                    },
                     raw_output=line,
                 )
                 db.add(finding)
                 db.flush()
 
-                # Store raw output as evidence
-                content_ref = f"nuclei_output_{finding.id}"
-                ev = Evidence(
+                # 1. Tool Output Evidence
+                db.add(Evidence(
                     finding_id=finding.id,
-                    kind="tool_output",
-                    content_ref=content_ref,
+                    kind=EvidenceKind.tool_output,
+                    content_ref=f"nuclei_output_{finding.id}",
                     sha256=hashlib.sha256(line.encode()).hexdigest(),
                     collected_by="nuclei",
-                )
-                db.add(ev)
+                ))
+
+                # 2. Raw Request Evidence (if provided by scanner)
+                if raw_request:
+                    db.add(Evidence(
+                        finding_id=finding.id,
+                        kind=EvidenceKind.request,
+                        content_ref=raw_request[:2000],
+                        sha256=hashlib.sha256(raw_request.encode()).hexdigest(),
+                        collected_by="nuclei",
+                    ))
+
+                # 3. Raw Response Evidence (if provided by scanner)
+                if raw_response:
+                    db.add(Evidence(
+                        finding_id=finding.id,
+                        kind=EvidenceKind.response,
+                        content_ref=raw_response[:2000],
+                        sha256=hashlib.sha256(raw_response.encode()).hexdigest(),
+                        collected_by="nuclei",
+                    ))
+
                 saved += 1
             except Exception as e:
                 logger.warning(f"Failed to parse nuclei output: {e}")
