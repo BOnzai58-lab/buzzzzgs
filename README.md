@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white" alt="Vite" />
   <img src="https://img.shields.io/badge/TailwindCSS-v4-38B2AC?logo=tailwindcss&logoColor=white" alt="Tailwind v4" />
   <img src="https://img.shields.io/badge/Kali_Linux-Ready-557C94?logo=kalilinux&logoColor=white" alt="Kali Linux Ready" />
-  <img src="https://img.shields.io/badge/Tests-46%20Passed%20(100%25)-brightgreen" alt="Tests 46 Passed" />
+  <img src="https://img.shields.io/badge/Tests-51%20Passed%20(100%25)-brightgreen" alt="Tests 51 Passed" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License" />
 </p>
 
@@ -20,11 +20,13 @@
 
 ## 🚀 Latest Update: Safety, Verification & Reliability Hardening
 
-In response to the comprehensive Technical Review Report, BugHunter AI has completed **Phase 1 through Phase 4** hardening:
+In response to the comprehensive Technical Review Report & Implementation Guide, BugHunter AI has completed **Phase 1 through Phase 4** hardening:
 
+- **🛡️ Real Batch Execution (§2.1, P0)**: Removed all simulated stages, hardcoded status codes (`200 OK`), fake gateway titles, and mock technology arrays from `batch_executor.py`. Probes now execute real HTTP/HTTPS requests with TLS verification, extracting actual server headers, real page titles, and live crawler endpoints.
+- **🔐 Privilege Escalation Defense (§2.2, P0)**: Removed `role` from the public registration schema (`UserCreate`). Server-side assignment defaults to `analyst` (least-privilege). Only the initial bootstrap user can be an `admin`. Created an admin-only endpoint (`POST /auth/users/{id}/role`) with audit logging to prevent self-promotion.
+- **🔒 TLS Verification & Redirect Gating (§2.4, P0)**: Enforced `verify=True` by default on all verifier and worker requests. Eliminated insecure `verify=False` and `allow_redirects=True`. Every redirect hop is independently validated against authorized scope.
 - **🛡️ Strict Wildcard & Scope Semantics (§1.1)**: Wildcard rules like `*.example.com` strictly encompass subdomains (`api.example.com`, `admin.sub.example.com`). Root apex domains (`example.com`) are **not** inferred to be in-scope unless explicitly listed.
 - **🚫 Automated SSRF & Cloud Metadata Defense (§1.1)**: Target validation deterministically blocks loopbacks (`127.0.0.1`), RFC1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), and AWS/GCP/Azure instance metadata (`169.254.169.254`) unless explicitly covered by a dedicated CIDR rule.
-- **🔄 HTTP 3xx Redirect Scope Validation (§1.1)**: Every redirect hop is inspected in real-time. If an asset redirects out-of-scope or toward private metadata, the chain is safely terminated.
 - **🛑 Process-Level Task Cancellation (§1.2)**: New `ProcessTracker` registers child tool processes (`subfinder`, `httpx`, `katana`, `nuclei`) and executes deterministic OS-level process tree termination (`taskkill /F /T` on Windows, `SIGKILL` process groups on Linux) whenever a scan is stopped.
 - **🔍 Verification Engine & Status Gating (§1.3, §4.4)**: New `VerificationEngine` performs safe, non-destructive HTTP verification checks with reproducible `curl` generation and SHA-256 evidence hashing. Transitioning findings to `verified` requires:
   1. An impact explanation note ($\ge$ 10 chars).
@@ -35,7 +37,7 @@ In response to the comprehensive Technical Review Report, BugHunter AI has compl
 - **🔐 WebSocket Ownership Authorization (§1.4)**: Real-time scan log subscriptions now validate JWTs and enforce user-to-scan ownership or admin roles.
 - **📄 Evidence-Grounded Reporting (§1.5, §4.6)**: Reports are strictly generated as **DRAFT — HUMAN REVIEW REQUIRED** with authentic HTTP artifacts, CVSS v3.1 calculations (never fabricated), and complete researcher checklists.
 - **🐧 Resilient Linux/Kali Setup (§2.1)**: Setup scripts auto-detect and recreate Windows-copied virtual environments, pin Go security tools to verified versions, and execute functional self-tests.
-- **🧪 46-Test Automated Suite (§2.4, §6)**: Built `run_tests.py` covering scope validation, process tracking, verification engine, and report generation with **100% test pass rate**.
+- **🧪 51-Test Automated Suite (§2.4, §6)**: Built `run_tests.py` covering scope validation, process tracking, verification engine, report generation, privilege escalation defense, and batch execution integrity with **100% test pass rate**. Validated `pytest.ini` and added `pyproject.toml`.
 
 ---
 

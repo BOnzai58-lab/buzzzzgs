@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bughunter"
+version = "2.0.0"
+description = "BugHunter AI — Autonomous Bug Bounty Reconnaissance & Vulnerability Analysis Platform"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
+asyncio_mode = "auto"

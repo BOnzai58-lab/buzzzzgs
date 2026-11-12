@@ -15,7 +15,9 @@ class Token(BaseModel):
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    role: UserRole = UserRole.analyst
+
+class UserRoleUpdate(BaseModel):
+    role: UserRole
 
 class UserResponse(BaseModel):
     model_config = {"from_attributes": True}

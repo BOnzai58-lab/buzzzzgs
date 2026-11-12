@@ -14,13 +14,23 @@ class UserBase(BaseModel):
     role: UserRole = UserRole.analyst
 
 
-class UserCreate(UserBase):
+class UserCreate(BaseModel):
+    """Public registration schema.
+    
+    Security (§2.2): 'role' is intentionally excluded to prevent
+    unauthorized privilege escalation to administrator upon signup.
+    """
+    email: EmailStr
     password: str = Field(min_length=8)
+
+
+class UserRoleUpdate(BaseModel):
+    """Admin-only schema for updating a user's role."""
+    role: UserRole
 
 
 class UserUpdate(BaseModel):
     email: EmailStr | None = None
-    role: UserRole | None = None
     password: str | None = Field(default=None, min_length=8)
 
 

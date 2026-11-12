@@ -606,33 +606,46 @@ def generate_report(self: Task, finding_id: str, user_id: str):
 
 @celery_app.task(name="app.workers.tasks.run_verification")
 def run_verification(finding_id: str, approval_id: str):
-    # Safe, non-destructive verification only
+    """Execute safe, non-destructive verification with strict TLS and redirect scope gating (§2.4)."""
     db = _db_session()
     try:
-        from app.models.all import Finding, Evidence
-        import hashlib, requests as req
+        from app.models.all import Finding, Evidence, ScopeRule, EvidenceKind
+        from app.verification.engine import verification_engine
+        import asyncio
 
         finding = db.get(Finding, uuid.UUID(finding_id))
         if not finding:
             return
-        # Only check security headers — safe passive check
+
+        rules = db.query(ScopeRule).filter(ScopeRule.program_id == finding.program_id).all()
         matched_at = finding.scope_result.get("matched_at", "")
         if matched_at:
-            try:
-                resp = req.get(matched_at, timeout=10, allow_redirects=True, verify=False)
-                headers_summary = json.dumps(dict(resp.headers), indent=2)
+            # Run verification with default TLS verification and hop-by-hop redirect gating
+            result = asyncio.run(
+                verification_engine.verify_endpoint(
+                    url=matched_at,
+                    rules=rules,
+                    method="GET",
+                    verify_tls=True,
+                )
+            )
+
+            if result.scope_valid and result.raw_response:
                 ev = Evidence(
                     finding_id=finding.id,
-                    kind="header",
-                    content_ref=f"headers_check_{finding.id}",
-                    sha256=hashlib.sha256(headers_summary.encode()).hexdigest(),
+                    kind=EvidenceKind.response,
+                    content_ref=f"verification_response_{finding.id}",
+                    sha256=result.response_sha256,
                     collected_by="verification_engine",
+                    raw_request=result.raw_request,
+                    raw_response=result.raw_response,
+                    curl_command=result.curl_command,
                 )
                 db.add(ev)
                 db.commit()
-                logger.info(f"Safe verification complete for {finding_id}")
-            except Exception as e:
-                logger.warning(f"Verification HTTP request failed: {e}")
+                logger.info(f"Safe verification complete for {finding_id} (status {result.status_code})")
+            else:
+                logger.warning(f"Verification failed or blocked for {finding_id}: {result.error}")
     except Exception as exc:
         logger.error(f"Verification task failed: {exc}")
     finally:

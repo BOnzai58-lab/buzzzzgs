@@ -50,10 +50,12 @@ class VerificationEngine:
         headers: dict[str, str] | None = None,
         data: str | None = None,
         max_redirects: int = 3,
+        verify_tls: bool = True,
     ) -> VerificationResult:
         """Execute a safe, non-destructive verification request against *url*.
         
         Strictly revalidates scope at each hop and blocks SSRF / out-of-scope redirects.
+        TLS certificate verification is enabled by default (§2.4).
         """
         # 1. Initial scope check
         sr = scope_validator.validate_target(url, rules)
@@ -93,10 +95,11 @@ class VerificationEngine:
         redirect_count = 0
 
         # Create custom client without auto-following redirects so we validate each hop
+        # TLS certificate verification enabled by default (§2.4)
         async with httpx.AsyncClient(
             follow_redirects=False,
             timeout=self.timeout,
-            verify=False,
+            verify=verify_tls,
         ) as client:
             try:
                 while True:

@@ -7,15 +7,18 @@
 
 ## 🚀 Latest Updates: Phase 1–4 Safety & Reliability Hardening
 
-- **Strict Wildcard Matching**: `*.example.com` covers subdomains only. The root apex domain (`example.com`) requires an explicit rule.
-- **SSRF & Cloud Metadata Defense**: Deterministically blocks RFC1918 private subnets and cloud metadata services (`169.254.169.254`).
-- **HTTP 3xx Redirect Gating**: Prevents crawlers and probers from jumping out of scope via open redirects.
-- **ProcessTracker Kill Stop**: Stopping scans terminates the OS process tree (`taskkill /F /T` on Windows, `SIGKILL` process groups on Linux).
-- **Verification Engine**: Safe, non-destructive verification with reproducible `curl` commands and SHA-256 evidence hashing.
+- **Real Batch Execution (§2.1, P0)**: Removed all simulated stages, hardcoded status codes (`200 OK`), fake gateway titles, and mock technology arrays. Probes now execute real HTTP/HTTPS requests with TLS verification, extracting actual server headers and live crawler endpoints.
+- **Privilege Escalation Defense (§2.2, P0)**: Removed `role` from the public registration schema (`UserCreate`). Server-side assignment defaults to `analyst`. Added admin-only role updates (`POST /auth/users/{id}/role`).
+- **TLS Verification & Redirect Gating (§2.4, P0)**: Enforced `verify=True` by default on all verifier and worker requests. No unchecked redirects.
+- **Strict Wildcard Matching (§1.1)**: `*.example.com` covers subdomains only. The root apex domain (`example.com`) requires an explicit rule.
+- **SSRF & Cloud Metadata Defense (§1.1)**: Deterministically blocks RFC1918 private subnets and cloud metadata services (`169.254.169.254`).
+- **HTTP 3xx Redirect Gating (§1.1)**: Prevents crawlers and probers from jumping out of scope via open redirects.
+- **ProcessTracker Kill Stop (§1.2)**: Stopping scans terminates the OS process tree (`taskkill /F /T` on Windows, `SIGKILL` process groups on Linux).
+- **Verification Engine (§1.3, §4.4)**: Safe, non-destructive verification with reproducible `curl` commands and SHA-256 evidence hashing.
 - **Strict Verification Gating**: Transitioning findings to `verified` requires an impact note ($\ge$ 10 chars), confirmed scope, reproducible test, and real HTTP evidence.
-- **WebSocket Ownership Check**: Ensures non-admin users only receive streaming logs for scans they started.
-- **Evidence-Grounded Reports**: All reports are generated as `DRAFT — HUMAN REVIEW REQUIRED` with cryptographic evidence hashes.
-- **Automated Test Suite**: 46 unit and integration tests passing at 100% via `python run_tests.py`.
+- **WebSocket Ownership Check (§1.4)**: Ensures non-admin users only receive streaming logs for scans they started.
+- **Evidence-Grounded Reports (§1.5, §4.6)**: All reports are generated as `DRAFT — HUMAN REVIEW REQUIRED` with cryptographic evidence hashes.
+- **Automated Test Suite (§2.4, §6)**: 51 unit and integration tests passing at 100% via `python run_tests.py`.
 
 ---
 

@@ -169,6 +169,24 @@ def main():
     check("Report without evidence explicitly flags missing evidence", "No evidence records found" in md_empty)
 
     # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 5] Auth Security & Privilege Escalation Defense (§2.2)")
+    # ─────────────────────────────────────────────────────────────────
+    from app.schemas.user import UserCreate as UserCreateSchema
+    # Check that UserCreate schema does not contain 'role' field
+    check("UserCreate schema excludes 'role' field to prevent privilege escalation", "role" not in UserCreateSchema.model_fields)
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 6] Batch Execution Integrity & Real Probing (§2.1)")
+    # ─────────────────────────────────────────────────────────────────
+    import inspect
+    from app.workers.batch_executor import execute_assessment_job
+    source = inspect.getsource(execute_assessment_job)
+    check("Batch executor has no hardcoded status_code=200", "status_code=200" not in source)
+    check("Batch executor has no hardcoded Cloudflare/Nginx tech array", 'tech=["Nginx", "Cloudflare", "HTTP/2"]' not in source)
+    check("Batch executor uses verification_engine for real probing", "verification_engine.verify_endpoint" in source)
+    check("Batch executor uses process_tracker for cancellable tool execution", "process_tracker.run_cancellable" in source)
+
+    # ─────────────────────────────────────────────────────────────────
     print("\n" + "=" * 65)
     print(f"Results: \033[32m{passed} passed\033[0m, \033[31m{failed} failed\033[0m")
     print("=" * 65)
