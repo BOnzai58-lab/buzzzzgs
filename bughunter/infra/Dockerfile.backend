@@ -1,0 +1,33 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies for security tools
+RUN apt-get update && apt-get install -y \
+    curl wget git unzip build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go (for security tools)
+RUN curl -OL https://go.dev/dl/go1.23.3.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go1.23.3.linux-amd64.tar.gz \
+    && rm go1.23.3.linux-amd64.tar.gz
+
+ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
+
+# Install security tools
+RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest 2>/dev/null || true
+RUN go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest 2>/dev/null || true
+RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest 2>/dev/null || true
+RUN go install -v github.com/projectdiscovery/katana/cmd/katana@latest 2>/dev/null || true
+RUN go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest 2>/dev/null || true
+RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest 2>/dev/null || true
+RUN go install -v github.com/lc/gau/v2/cmd/gau@latest 2>/dev/null || true
+RUN go install -v github.com/tomnomnom/waybackurls@latest 2>/dev/null || true
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+

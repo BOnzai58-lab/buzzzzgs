@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases & state
+*.db
+*.sqlite
+*.sqlite3
+bughunter.db
+
+# Secrets & Environment variables (Keep .env.example)
+.env
+.env*.local
+!.env.example
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Evidence & generated test artifacts
+data/evidence/
+data/reports/
+data/
+*.log
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
