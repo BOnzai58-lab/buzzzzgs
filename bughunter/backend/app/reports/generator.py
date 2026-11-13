@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
+from app.evidence.redactor import evidence_redactor
 
 
 class ReportGenerator:
@@ -134,27 +135,30 @@ class ReportGenerator:
                     lines.append("- ⚠️ **Automated — not yet verified by human**")
 
                 if raw_req:
+                    sanitized_req = evidence_redactor.redact_raw_request(raw_req)
                     lines += [
                         "",
-                        "**HTTP Request (as captured):**",
+                        "**HTTP Request (as captured, secrets redacted):**",
                         "```http",
-                        raw_req[:1500],
+                        sanitized_req[:1500],
                         "```",
                     ]
                 if raw_resp:
+                    sanitized_resp = evidence_redactor.redact_raw_response(raw_resp)
                     lines += [
                         "",
-                        "**HTTP Response (as captured):**",
+                        "**HTTP Response (as captured, secrets redacted):**",
                         "```http",
-                        raw_resp[:1500],
+                        sanitized_resp[:1500],
                         "```",
                     ]
                 if ev_curl:
+                    sanitized_curl = evidence_redactor.redact_curl_command(ev_curl)
                     lines += [
                         "",
-                        "**Reproduction Command (from evidence):**",
+                        "**Reproduction Command (sanitized):**",
                         "```bash",
-                        ev_curl,
+                        sanitized_curl,
                         "```",
                     ]
                 lines.append("")

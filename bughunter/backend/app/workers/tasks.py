@@ -450,21 +450,25 @@ def run_vuln_scan(self: Task, scan_id: str, program_id: str, targets: list[str])
 
                 # 2. Raw Request Evidence (if provided by scanner)
                 if raw_request:
+                    from app.evidence.redactor import evidence_redactor
+                    sanitized_req = evidence_redactor.redact_raw_request(raw_request)
                     db.add(Evidence(
                         finding_id=finding.id,
                         kind=EvidenceKind.request,
-                        content_ref=raw_request[:2000],
-                        sha256=hashlib.sha256(raw_request.encode()).hexdigest(),
+                        content_ref=sanitized_req[:2000],
+                        sha256=hashlib.sha256(sanitized_req.encode()).hexdigest(),
                         collected_by="nuclei",
                     ))
 
                 # 3. Raw Response Evidence (if provided by scanner)
                 if raw_response:
+                    from app.evidence.redactor import evidence_redactor
+                    sanitized_resp = evidence_redactor.redact_raw_response(raw_response)
                     db.add(Evidence(
                         finding_id=finding.id,
                         kind=EvidenceKind.response,
-                        content_ref=raw_response[:2000],
-                        sha256=hashlib.sha256(raw_response.encode()).hexdigest(),
+                        content_ref=sanitized_resp[:2000],
+                        sha256=hashlib.sha256(sanitized_resp.encode()).hexdigest(),
                         collected_by="nuclei",
                     ))
 

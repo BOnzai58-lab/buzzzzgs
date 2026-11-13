@@ -15,23 +15,32 @@ from pathlib import Path
 from typing import Any
 from loguru import logger
 
-# List of search paths for security tools
+# Cross-platform search paths for security tools
+home_dir = Path.home()
+go_bin = home_dir / "go" / "bin"
+local_bin = home_dir / ".local" / "bin"
+
 SEARCH_DIRS = [
-    os.path.expanduser("~/go/bin"),
-    os.path.expanduser("~/.local/bin"),
-    "/usr/local/go/bin",
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
+    str(go_bin),
+    str(local_bin),
 ]
 
-# Ensure user-local directories are in PATH
-CURRENT_PATH = os.environ.get("PATH", "")
-for d in [os.path.expanduser("~/go/bin"), os.path.expanduser("~/.local/bin"), "/usr/local/go/bin"]:
-    if d not in CURRENT_PATH:
-        os.environ["PATH"] = f"{d}:{CURRENT_PATH}"
+if platform.system() != "Windows":
+    SEARCH_DIRS.extend([
+        "/usr/local/go/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ])
+
+# Ensure user-local directories are in PATH using platform-correct separator
+current_paths = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+for d in [str(go_bin), str(local_bin)]:
+    if d not in current_paths and os.path.exists(d):
+        current_paths.insert(0, d)
+os.environ["PATH"] = os.pathsep.join(current_paths)
 
 
 TOOLS_CONFIG: dict[str, dict[str, Any]] = {
@@ -234,16 +243,39 @@ class LinuxToolManager:
         if not config:
             return {"name": tool_name, "status": "Not Installed", "installed": False, "version": None}
 
-        # Check if currently installing
-        if tool_name in cls._active_tasks and not cls._active_tasks[tool_name].done():
+        tool_supported_os = config.get("supported_os", ["Linux", "Windows", "Darwin"])
+        current_os = platform.system()
+        is_tool_supported = current_os in tool_supported_os
+
+        if not is_tool_supported:
             return {
                 "name": tool_name,
-                "status": "Installing",
+                "status": "Unavailable on Platform",
+                "availability_status": "UNAVAILABLE_ON_PLATFORM",
+                "application_supported": True,
+                "tool_supported": False,
                 "installed": False,
                 "version": None,
                 "path": None,
                 "category": config["category"],
                 "description": config["description"],
+                "doc_url": config.get("doc_url", ""),
+            }
+
+        # Check if currently installing
+        if tool_name in cls._active_tasks and not cls._active_tasks[tool_name].done():
+            return {
+                "name": tool_name,
+                "status": "Installing",
+                "availability_status": "INSTALLING",
+                "application_supported": True,
+                "tool_supported": True,
+                "installed": False,
+                "version": None,
+                "path": None,
+                "category": config["category"],
+                "description": config["description"],
+                "doc_url": config.get("doc_url", ""),
             }
 
         binary_path = cls.locate_tool_binary(tool_name)
@@ -251,11 +283,15 @@ class LinuxToolManager:
             return {
                 "name": tool_name,
                 "status": "Not Installed",
+                "availability_status": "NOT_INSTALLED",
+                "application_supported": True,
+                "tool_supported": True,
                 "installed": False,
                 "version": None,
                 "path": None,
                 "category": config["category"],
                 "description": config["description"],
+                "doc_url": config.get("doc_url", ""),
             }
 
         # Run version command
@@ -275,10 +311,12 @@ class LinuxToolManager:
         except Exception as e:
             logger.debug(f"Version check failed for {tool_name}: {e}")
 
-        status = "Installed"
         return {
             "name": tool_name,
-            "status": status,
+            "status": "Installed",
+            "availability_status": "AVAILABLE",
+            "application_supported": True,
+            "tool_supported": True,
             "installed": True,
             "version": version_str or "Installed",
             "path": binary_path,

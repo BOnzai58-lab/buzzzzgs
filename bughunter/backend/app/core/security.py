@@ -129,3 +129,33 @@ def require_role(*roles: str):
         return current_user
 
     return _check
+
+
+def enforce_resource_access(user, owner_id: UUID | str | None, action: str = "read") -> None:
+    """Enforce resource-level authorization and role permissions per §15, §17.
+    
+    - 'viewer' role is strictly read-only; mutation/scan execution raises 403 Forbidden.
+    - Non-admin users cannot access or mutate resources owned by other users.
+    - 'admin' role has global management privileges across resources.
+    """
+    user_role = str(getattr(user, "role", "")).lower()
+
+    # Rule 1: Viewer cannot perform any write/execution action
+    if user_role == "viewer" and action.lower() not in ("read", "view", "get"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Viewer accounts have strictly read-only access and cannot modify resources or initiate scans.",
+        )
+
+    # Rule 2: Admins have tenant-wide authorization
+    if user_role == "admin":
+        return
+
+    # Rule 3: Check resource ownership for analysts / members
+    if owner_id is not None:
+        user_uuid = getattr(user, "id", None)
+        if str(user_uuid) != str(owner_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You do not have permission to access or modify this resource.",
+            )

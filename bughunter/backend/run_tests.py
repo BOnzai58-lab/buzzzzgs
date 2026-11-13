@@ -187,6 +187,171 @@ def main():
     check("Batch executor uses process_tracker for cancellable tool execution", "process_tracker.run_cancellable" in source)
 
     # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 7] Evidence Redaction & Secret Sanitization (§12.1)")
+    # ─────────────────────────────────────────────────────────────────
+    from app.evidence.redactor import evidence_redactor
+
+    hdrs = {
+        "Authorization": "Bearer secret_token_value_xyz123",
+        "Cookie": "session=abcde12345; auth_token=token999; theme=dark",
+        "X-Api-Key": "my-secret-key-12345",
+        "Content-Type": "application/json",
+    }
+    redacted_hdrs = evidence_redactor.redact_headers(hdrs)
+    check("Redacts Authorization Bearer token", "[REDACTED_TOKEN]" in redacted_hdrs["Authorization"])
+    check("Redacts Cookie values", "session=[REDACTED]" in redacted_hdrs["Cookie"] and "auth_token=[REDACTED]" in redacted_hdrs["Cookie"])
+    check("Redacts X-Api-Key header", redacted_hdrs["X-Api-Key"] == "[REDACTED_SECRET]")
+    check("Preserves safe non-sensitive headers", redacted_hdrs["Content-Type"] == "application/json")
+
+    jwt_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    raw_text = f"User token is {jwt_token} and AWS key is AKIAIOSFODNN7EXAMPLE."
+    redacted_text = evidence_redactor.redact_text(raw_text)
+    check("Redacts JWT tokens from body/text", "[REDACTED_JWT]" in redacted_text and jwt_token not in redacted_text)
+    check("Redacts AWS access keys from body/text", "[REDACTED_AWS_KEY]" in redacted_text and "AKIAIOSFODNN7EXAMPLE" not in redacted_text)
+
+    curl_sample = "curl -i -H 'Authorization: Bearer mysecret' 'https://api.target.com/user?password=secretPassword123'"
+    redacted_curl = evidence_redactor.redact_curl_command(curl_sample)
+    check("Redacts secrets from query parameters in curl command", "password=[REDACTED]" in redacted_curl and "secretPassword123" not in redacted_curl)
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 8] Scan Limitations & Policy Manager (§6)")
+    # ─────────────────────────────────────────────────────────────────
+    from app.services.policy_manager import (
+        policy_manager,
+        PolicyDefinition,
+        ScanProfile,
+        TestCategory,
+        RestrictedOperation,
+    )
+
+    base_pol = policy_manager.resolve_effective_policy()
+    check("Default policy is STANDARD profile", base_pol.profile == ScanProfile.STANDARD)
+    check("Default policy permits DNS and HTTP checks", base_pol.is_category_permitted(TestCategory.DNS) and base_pol.is_category_permitted(TestCategory.HTTP_HEADERS))
+    check("Default policy prohibits DoS testing", base_pol.is_operation_prohibited(RestrictedOperation.DOS))
+    check("Default policy prohibits destructive payloads", base_pol.is_operation_prohibited(RestrictedOperation.DESTRUCTIVE_PAYLOADS))
+    check("Default policy prohibits brute force", base_pol.is_operation_prohibited(RestrictedOperation.BRUTE_FORCE))
+
+    # Test inheritance: Stricter rule wins
+    prog_pol = PolicyDefinition(
+        profile=ScanProfile.STANDARD,
+        blocked_categories={TestCategory.XSS},
+        max_rps=5.0,
+        max_concurrency=2,
+    )
+    target_pol = PolicyDefinition(
+        profile=ScanProfile.LOW_IMPACT,
+        max_rps=100.0,  # Target attempts to increase rate limit — MUST BE REJECTED
+        max_concurrency=10,
+    )
+    eff = policy_manager.resolve_effective_policy(program_policy=prog_pol, target_policy=target_pol)
+    check("Target cannot weaken program category block (XSS remains blocked)", eff.is_category_permitted(TestCategory.XSS) is False)
+    check("Target cannot increase RPS beyond program cap (min rate limit wins)", eff.max_rps <= 5.0)
+    check("Target can lower profile to LOW_IMPACT", eff.profile == ScanProfile.LOW_IMPACT)
+    check("Policy version is deterministic non-empty string", len(eff.version) >= 8)
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 9] Adaptive Assessment Planner (§9)")
+    # ─────────────────────────────────────────────────────────────────
+    from app.services.planner import (
+        adaptive_planner,
+        CheckStatus,
+    )
+
+    inventory_sample = {
+        "tech": ["WordPress 6.2", "Nginx"],
+        "endpoints": [
+            "https://api.target.com/api/v1/users",
+            "https://api.target.com/static/bundle.js",
+            "https://api.target.com/auth/login",
+            "https://api.target.com/search?q=test",
+        ],
+        "headers": {"server": "nginx"},
+    }
+    plan = adaptive_planner.generate_plan(
+        target="api.target.com",
+        scope_rules=basic_rules,
+        policy=base_pol,
+        inventory=inventory_sample,
+    )
+    check("Adaptive planner generates candidate checks", len(plan.checks) > 0)
+    check("Adaptive planner identifies WordPress configuration check", any("WordPress" in c.name for c in plan.checks))
+    check("Adaptive planner identifies API assessment check", any("API" in c.name for c in plan.checks))
+    check("Adaptive planner identifies JavaScript inspection check", any("JavaScript" in c.name for c in plan.checks))
+    check("Adaptive planner identifies Authentication check", any("Authentication" in c.name for c in plan.checks))
+    check("Adaptive planner identifies safe Parameter / XSS check", any("Input Validation" in c.name or "XSS" in c.name for c in plan.checks))
+
+    # Test out-of-scope candidate gets BLOCKED_BY_SCOPE
+    plan_oob = adaptive_planner.generate_plan(
+        target="evil.com",
+        scope_rules=basic_rules,
+        policy=base_pol,
+    )
+    check("Out-of-scope candidate check marked BLOCKED_BY_SCOPE", any(c.status == CheckStatus.BLOCKED_BY_SCOPE for c in plan_oob.checks))
+
+    # Test disabled category gets SKIPPED_BY_POLICY
+    restricted_pol = policy_manager.resolve_effective_policy(
+        program_policy=PolicyDefinition(blocked_categories={TestCategory.DNS, TestCategory.HTTP_HEADERS})
+    )
+    plan_restricted = adaptive_planner.generate_plan(
+        target="api.target.com",
+        scope_rules=basic_rules,
+        policy=restricted_pol,
+    )
+    check("Disabled category check marked SKIPPED_BY_POLICY", any(c.status == CheckStatus.SKIPPED_BY_POLICY for c in plan_restricted.checks))
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 10] Tool Manager & Cross-Platform Compatibility (§19.8)")
+    # ─────────────────────────────────────────────────────────────────
+    from app.services.tool_manager import LinuxToolManager
+    tool_info = LinuxToolManager.verify_tool("subfinder")
+    check("Tool verification reports application_supported=True", tool_info.get("application_supported") is True)
+    check("Tool verification reports tool_supported=True", tool_info.get("tool_supported") is True)
+    check("Tool verification provides availability_status", tool_info.get("availability_status") in ("AVAILABLE", "NOT_INSTALLED", "INSTALLING"))
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 11] Resource-Level Access Control & RBAC (§17, §2.5)")
+    # ─────────────────────────────────────────────────────────────────
+    from fastapi import HTTPException
+    from app.core.security import enforce_resource_access
+
+    fake_viewer = SimpleNamespace(id=uuid.uuid4(), role="viewer")
+    fake_analyst_1 = SimpleNamespace(id=uuid.uuid4(), role="analyst")
+    fake_analyst_2 = SimpleNamespace(id=uuid.uuid4(), role="analyst")
+    fake_admin = SimpleNamespace(id=uuid.uuid4(), role="admin")
+
+    # Viewer cannot perform mutation
+    viewer_blocked = False
+    try:
+        enforce_resource_access(fake_viewer, owner_id=fake_viewer.id, action="create")
+    except HTTPException as e:
+        viewer_blocked = (e.status_code == 403)
+    check("Viewer role blocked from mutation/scan action (HTTP 403)", viewer_blocked)
+
+    # Viewer can perform read
+    viewer_read_ok = True
+    try:
+        enforce_resource_access(fake_viewer, owner_id=fake_viewer.id, action="read")
+    except HTTPException:
+        viewer_read_ok = False
+    check("Viewer role permitted to perform read action", viewer_read_ok)
+
+    # Cross-user analyst access blocked
+    cross_blocked = False
+    try:
+        enforce_resource_access(fake_analyst_1, owner_id=fake_analyst_2.id, action="read")
+    except HTTPException as e:
+        cross_blocked = (e.status_code == 403)
+    check("Analyst blocked from accessing another user's resource (HTTP 403)", cross_blocked)
+
+    # Admin permitted across resources
+    admin_ok = True
+    try:
+        enforce_resource_access(fake_admin, owner_id=fake_analyst_2.id, action="delete")
+    except HTTPException:
+        admin_ok = False
+    check("Admin role permitted across all resources", admin_ok)
+
+    # ─────────────────────────────────────────────────────────────────
     print("\n" + "=" * 65)
     print(f"Results: \033[32m{passed} passed\033[0m, \033[31m{failed} failed\033[0m")
     print("=" * 65)

@@ -46,6 +46,9 @@ from app.scope.validator import scope_validator
 from app.verification.engine import verification_engine
 from app.core.process_tracker import process_tracker
 from app.audit.logger import audit
+from app.services.policy_manager import policy_manager, TestCategory
+from app.services.planner import adaptive_planner
+from app.evidence.redactor import evidence_redactor
 
 
 async def log_job_event(db, job_id: uuid.UUID, stage: str, message: str, level: str = "INFO", data: dict = None):
@@ -88,11 +91,11 @@ async def execute_assessment_job(job_id: uuid.UUID):
 
         try:
             # ─────────────────────────────────────────────────────────────
-            # 1. Snapshot Authorization & Scope Revalidation (§1.1, §2.1)
+            # 1. Snapshot Authorization, Policy & Scope Revalidation (§1.1, §6)
             # ─────────────────────────────────────────────────────────────
             job.current_stage = "scope_revalidation"
             job.progress = 5
-            await log_job_event(db, job.id, "scope_revalidation", f"Revalidating scope for target {job.target_value}")
+            await log_job_event(db, job.id, "scope_revalidation", f"Revalidating scope and policy for target {job.target_value}")
             
             rules_res = await db.execute(select(ScopeRule).where(ScopeRule.program_id == program.id))
             rules = rules_res.scalars().all()
@@ -100,6 +103,13 @@ async def execute_assessment_job(job_id: uuid.UUID):
             scope_res = scope_validator.validate_target(job.target_value, rules, program_id=program.id)
             if not scope_res.allowed:
                 raise ValueError(f"Scope violation detected at runtime: {scope_res.reason}")
+
+            # Compute server-side effective policy (§6)
+            eff_policy = policy_manager.resolve_effective_policy()
+            await log_job_event(
+                db, job.id, "scope_revalidation",
+                f"Effective policy applied: profile={eff_policy.profile.value}, version={eff_policy.version}, max_rps={eff_policy.max_rps}"
+            )
 
             # ─────────────────────────────────────────────────────────────
             # 2. Passive Reconnaissance / Asset Registration
@@ -124,9 +134,9 @@ async def execute_assessment_job(job_id: uuid.UUID):
                 db.add(asset)
                 await db.flush()
 
-            # Optional Subfinder enumeration if tool installed
+            # Subfinder enumeration if tool installed and DNS permitted
             discovered_subdomains = []
-            if shutil.which("subfinder"):
+            if shutil.which("subfinder") and eff_policy.is_category_permitted(TestCategory.DNS):
                 task_id = f"job_subfinder_{job.id}"
                 exit_code, stdout, _ = process_tracker.run_cancellable(
                     ["subfinder", "-d", normalized_domain, "-silent", "-json"],
@@ -143,6 +153,8 @@ async def execute_assessment_job(job_id: uuid.UUID):
                         except Exception:
                             pass
                 await log_job_event(db, job.id, "passive_recon", f"Subfinder discovered {len(discovered_subdomains)} in-scope subdomains")
+            elif not eff_policy.is_category_permitted(TestCategory.DNS):
+                await log_job_event(db, job.id, "passive_recon", "Subfinder skipped: DNS reconnaissance disabled by policy")
 
             # ─────────────────────────────────────────────────────────────
             # 3. DNS & HTTP Probe (Real HTTP Request, No Hardcoded Values)
@@ -225,7 +237,7 @@ async def execute_assessment_job(job_id: uuid.UUID):
             await log_job_event(db, job.id, "endpoint_discovery", f"Analyzing endpoints for {job.target_value}")
 
             discovered_endpoints = 0
-            if live_host and shutil.which("katana"):
+            if live_host and shutil.which("katana") and eff_policy.is_category_permitted(TestCategory.CONTENT_DISCOVERY):
                 task_id = f"job_katana_{job.id}"
                 exit_code, stdout, _ = process_tracker.run_cancellable(
                     ["katana", "-u", live_host.url, "-json", "-depth", "2", "-silent"],
@@ -250,15 +262,33 @@ async def execute_assessment_job(job_id: uuid.UUID):
                         except Exception:
                             pass
                 await log_job_event(db, job.id, "endpoint_discovery", f"Crawler discovered {discovered_endpoints} endpoints")
+            elif not eff_policy.is_category_permitted(TestCategory.CONTENT_DISCOVERY):
+                await log_job_event(db, job.id, "endpoint_discovery", "Crawler skipped: Content discovery disabled by policy")
             else:
                 await log_job_event(db, job.id, "endpoint_discovery", "Crawler skipped (tool not installed or host not live)")
 
             # ─────────────────────────────────────────────────────────────
-            # 5. Security & Configuration Checks (Real Nuclei Execution)
+            # 5. Adaptive Assessment Planning (§9) & Non-Destructive Checks
             # ─────────────────────────────────────────────────────────────
             job.current_stage = "vulnerability_assessment"
             job.progress = 85
-            await log_job_event(db, job.id, "vulnerability_assessment", f"Running approved non-destructive checks")
+            await log_job_event(db, job.id, "vulnerability_assessment", f"Running adaptive planner and non-destructive checks")
+
+            # Run Adaptive Planner based on discovered inventory
+            plan = adaptive_planner.generate_plan(
+                target=job.target_value,
+                scope_rules=rules,
+                policy=eff_policy,
+                inventory={
+                    "tech": tech,
+                    "endpoints": [live_host.url] if live_host else [],
+                    "headers": probe_res.response_headers,
+                },
+            )
+            await log_job_event(
+                db, job.id, "vulnerability_assessment",
+                f"Adaptive Planner: {plan.planned_checks} planned, {plan.skipped_checks} skipped by policy, {plan.blocked_checks} blocked by scope"
+            )
 
             discovered_findings = 0
             if live_host and shutil.which("nuclei"):
@@ -268,6 +298,8 @@ async def execute_assessment_job(job_id: uuid.UUID):
                     tmpfile = f.name
 
                 task_id = f"job_nuclei_{job.id}"
+                # Respect policy rate limits
+                rate_limit = str(int(eff_policy.max_rps))
                 nuclei_cmd = [
                     "nuclei",
                     "-l", tmpfile,
@@ -276,7 +308,7 @@ async def execute_assessment_job(job_id: uuid.UUID):
                     "-severity", "low,medium,high,critical",
                     "-type", "http",
                     "-exclude-tags", "dos,fuzz,bruteforce,ddos",
-                    "-rate-limit", "100",
+                    "-rate-limit", rate_limit,
                 ]
                 exit_code, stdout, _ = process_tracker.run_cancellable(nuclei_cmd, task_id=task_id, timeout=300)
                 os.unlink(tmpfile)
@@ -300,6 +332,10 @@ async def execute_assessment_job(job_id: uuid.UUID):
                             if existing.scalar_one_or_none():
                                 continue
 
+                            # Redact sensitive tokens in evidence per §12.1
+                            curl_cmd = evidence_redactor.redact_curl_command(data.get("curl-command") or f"curl -i -s '{matched_at}'")
+                            sanitized_line = evidence_redactor.redact_text(line)
+
                             finding = Finding(
                                 program_id=program.id,
                                 asset_id=asset.id,
@@ -312,24 +348,24 @@ async def execute_assessment_job(job_id: uuid.UUID):
                                 dedup_key=dedup_key,
                                 scope_result={
                                     "matched_at": matched_at,
-                                    "curl_command": data.get("curl-command") or f"curl -i -s '{matched_at}'",
+                                    "curl_command": curl_cmd,
                                     "extracted_results": data.get("extracted-results", []),
                                     "cvss_score": data.get("info", {}).get("classification", {}).get("cvss-score"),
                                     "cvss_metrics": data.get("info", {}).get("classification", {}).get("cvss-metrics"),
                                 },
-                                raw_output=line,
+                                raw_output=sanitized_line,
                             )
                             db.add(finding)
                             await db.flush()
 
-                            # Attach real evidence
+                            # Attach real sanitized evidence
                             db.add(Evidence(
                                 finding_id=finding.id,
                                 kind=EvidenceKind.tool_output,
                                 content_ref=f"nuclei_{finding.id}",
-                                sha256=hashlib.sha256(line.encode()).hexdigest(),
+                                sha256=hashlib.sha256(sanitized_line.encode()).hexdigest(),
                                 collected_by="nuclei",
-                                curl_command=data.get("curl-command"),
+                                curl_command=curl_cmd,
                             ))
                             discovered_findings += 1
                         except Exception:

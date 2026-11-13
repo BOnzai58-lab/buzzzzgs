@@ -16,6 +16,7 @@ import httpx
 from loguru import logger
 
 from app.scope.validator import ScopeValidator, scope_validator
+from app.evidence.redactor import evidence_redactor
 
 
 @dataclass
@@ -150,17 +151,26 @@ class VerificationEngine:
                     resp_lines.append(f"{k}: {v}")
                 resp_lines += ["", raw_resp_text]
                 raw_resp = "\n".join(resp_lines)
-                resp_sha256 = hashlib.sha256(raw_resp.encode()).hexdigest()
+
+                # Sanitize secrets per §12.1 minimal sanitized evidence standard
+                sanitized_req = evidence_redactor.redact_raw_request(raw_req)
+                sanitized_resp = evidence_redactor.redact_raw_response(raw_resp)
+                sanitized_curl = evidence_redactor.redact_curl_command(curl_cmd)
+                sanitized_req_headers = evidence_redactor.redact_headers(req_headers)
+                sanitized_resp_headers = evidence_redactor.redact_headers(dict(resp.headers))
+
+                req_sha256 = hashlib.sha256(sanitized_req.encode()).hexdigest()
+                resp_sha256 = hashlib.sha256(sanitized_resp.encode()).hexdigest()
 
                 return VerificationResult(
                     success=resp.is_success or resp.is_redirect,
                     status_code=resp.status_code,
                     url=current_url,
-                    request_headers=req_headers,
-                    response_headers=dict(resp.headers),
-                    raw_request=raw_req,
-                    raw_response=raw_resp,
-                    curl_command=curl_cmd,
+                    request_headers=sanitized_req_headers,
+                    response_headers=sanitized_resp_headers,
+                    raw_request=sanitized_req,
+                    raw_response=sanitized_resp,
+                    curl_command=sanitized_curl,
                     request_sha256=req_sha256,
                     response_sha256=resp_sha256,
                     duration_ms=duration,

@@ -5,8 +5,13 @@
 
 ---
 
-## 🚀 Latest Updates: Phase 1–4 Safety & Reliability Hardening
+## 🚀 Latest Updates: Master Development Specification Implementation
 
+- **Adaptive Assessment Planner (§9)**: Intelligent 10-step assessment cycle generating candidate checks based on discovered assets (CMS detection, API route inventory, client-side JS analysis, login/session inspection, file-handling, and parameter validation) with §9.3 status tracking (`planned`, `running`, `passed`, `potential`, `verified`, `skipped_by_policy`, `blocked_by_scope`, `unsupported`, `failed`).
+- **Scan Limitation & Policy Manager (§6)**: Hierarchical server-side policy inheritance (`Global -> Program -> Target`) with conflict resolution favoring stricter rules. Supports scan profiles (`passive`, `low_impact`, `standard`, `extended`), rate limits (RPS, concurrency), and permanent blocks on prohibited attack operations (DoS, destructive payloads, brute force).
+- **Evidence Secret Redaction Service (§12.1)**: Comprehensive sanitization of sensitive tokens (`Authorization: Bearer`, session cookies, passwords, JWTs, AWS keys, PEM private keys) in raw requests, raw responses, reproducible curl commands, and generated reports while preserving cryptographic proof and structural integrity.
+- **Cross-Platform Compatibility Matrix (§19.8)**: 3-state platform abstraction in `tool_manager.py` distinguishing `application_supported` (True), `tool_supported` (OS-level support), and `installed` (binary found in PATH), reporting explicit `availability_status` (`AVAILABLE`, `NOT_INSTALLED`, `UNAVAILABLE_ON_PLATFORM`) across Linux, Windows, and macOS.
+- **Resource-Level Access Control & RBAC (§17, §2.5)**: Enforces read-only permissions for `viewer` accounts (blocking scan initiation and data mutation with HTTP 403) and isolates resources between analysts.
 - **Real Batch Execution (§2.1, P0)**: Removed all simulated stages, hardcoded status codes (`200 OK`), fake gateway titles, and mock technology arrays. Probes now execute real HTTP/HTTPS requests with TLS verification, extracting actual server headers and live crawler endpoints.
 - **Privilege Escalation Defense (§2.2, P0)**: Removed `role` from the public registration schema (`UserCreate`). Server-side assignment defaults to `analyst`. Added admin-only role updates (`POST /auth/users/{id}/role`).
 - **TLS Verification & Redirect Gating (§2.4, P0)**: Enforced `verify=True` by default on all verifier and worker requests. No unchecked redirects.
@@ -18,7 +23,7 @@
 - **Strict Verification Gating**: Transitioning findings to `verified` requires an impact note ($\ge$ 10 chars), confirmed scope, reproducible test, and real HTTP evidence.
 - **WebSocket Ownership Check (§1.4)**: Ensures non-admin users only receive streaming logs for scans they started.
 - **Evidence-Grounded Reports (§1.5, §4.6)**: All reports are generated as `DRAFT — HUMAN REVIEW REQUIRED` with cryptographic evidence hashes.
-- **Automated Test Suite (§2.4, §6)**: 51 unit and integration tests passing at 100% via `python run_tests.py`.
+- **Automated Test Suite (§2.4, §6, §18)**: 82 automated unit and integration tests passing at 100% via `python run_tests.py`.
 
 ---
 
