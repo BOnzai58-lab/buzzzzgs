@@ -685,3 +685,219 @@ def run_resolve_scan(scan_id: str, program_id: str, targets: list[str]):
 def run_history_scan(scan_id: str, program_id: str, targets: list[str]):
     run_crawl_scan(scan_id, program_id, targets)
 
+
+
+# ---------------------------------------------------------------------------
+# Exploitation Engine task (§11 of Master Dev Spec)
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, name="app.workers.tasks.run_exploitation_scan")
+def run_exploitation_scan(
+    self: Task,
+    scan_id: str,
+    program_id: str,
+    targets: list[str],
+    enabled_categories: list[str] | None = None,
+    oob_callback: str | None = None,
+    alternate_token: str | None = None,
+):
+    """Run the full exploitation engine against in-scope, authorised targets.
+
+    Steps:
+    1. Validate every target against scope rules.
+    2. Check the program has an active, non-expired AuthorizationRecord.
+    3. For each target, authorise through the PolicyEnforcementGateway.
+    4. Run the ExploitationEngine for all enabled categories.
+    5. Persist findings + evidence; redact secrets before storage.
+    """
+    db = _db_session()
+    try:
+        from app.models.all import (
+            Scan, Program, ScopeRule, Asset, Finding, Evidence,
+            Severity, FindingStatus, EvidenceKind, AuthorizationRecord,
+        )
+        from app.scope.validator import scope_validator
+        from app.services.enforcement_gateway import enforcement_gateway, AuthorizationRecord as GWAuthRecord
+        from app.services.exploitation_engine import ExploitationEngine, ExploitCategory
+        from app.services.policy_manager import PolicyManager, PolicyDefinition, TestCategory
+        from app.evidence.redactor import evidence_redactor
+        from datetime import datetime, timezone
+
+        _update_scan(db, scan_id, "running", 5)
+        _publish_log(scan_id, "INFO", "Starting exploitation engine scan…")
+
+        program = db.get(Program, uuid.UUID(program_id))
+        if not program:
+            _update_scan(db, scan_id, "failed", 0)
+            _publish_log(scan_id, "ERROR", "Program not found")
+            return
+
+        # --- 1. Load scope rules ---
+        rules = db.query(ScopeRule).filter(ScopeRule.program_id == uuid.UUID(program_id)).all()
+
+        # --- 2. Check authorization record ---
+        now = datetime.now(timezone.utc)
+        auth_records = (
+            db.query(AuthorizationRecord)
+            .filter(
+                AuthorizationRecord.program_id == uuid.UUID(program_id),
+                AuthorizationRecord.is_active.is_(True),
+            )
+            .order_by(AuthorizationRecord.created_at.desc())
+            .all()
+        )
+        active_auth = None
+        for ar in auth_records:
+            expiry = ar.expiry_date
+            if expiry:
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                if now > expiry:
+                    continue
+            active_auth = ar
+            break
+
+        if active_auth is None:
+            _publish_log(
+                scan_id, "ERROR",
+                "No active, non-expired authorization record found for this program. "
+                "Create an authorization record before running exploitation scans."
+            )
+            _update_scan(db, scan_id, "failed", 0)
+            return
+
+        # Build gateway-compatible auth object
+        gw_auth = GWAuthRecord(
+            authorized_domains=active_auth.authorized_domains or [],
+            authorized_ips=active_auth.authorized_ips or [],
+            excluded_domains=active_auth.excluded_domains or [],
+            expiry_date=active_auth.expiry_date,
+            is_active=True,
+        )
+
+        # --- 3. Compute effective policy ---
+        policy_mgr = PolicyManager()
+        effective_policy = policy_mgr.compute_effective_policy(
+            global_policy=PolicyDefinition(),
+        )
+
+        # Map enabled_categories strings → ExploitCategory set
+        exploit_cats: set[ExploitCategory] | None = None
+        if enabled_categories:
+            exploit_cats = set()
+            for cat_str in enabled_categories:
+                try:
+                    exploit_cats.add(ExploitCategory(cat_str))
+                except ValueError:
+                    _publish_log(scan_id, "WARN", f"Unknown category ignored: {cat_str}")
+
+        # --- 4. Validate and authorise targets ---
+        valid_targets: list[str] = []
+        for t in targets:
+            sr = scope_validator.validate_target(t, rules)
+            if not sr.allowed:
+                _publish_log(scan_id, "WARN", f"Skipping out-of-scope target '{t}': {sr.reason}")
+                continue
+
+            gw_result = enforcement_gateway.authorize_action(
+                action_type="exploitation_scan",
+                target=t,
+                category="sqli",        # representative check
+                authorization=gw_auth,
+                effective_policy=effective_policy,
+                scope_validator=scope_validator,
+                scope_rules=rules,
+            )
+            if not gw_result.allowed:
+                _publish_log(scan_id, "WARN", f"Gateway blocked '{t}': {gw_result.reason}")
+                continue
+
+            valid_targets.append(t)
+
+        if not valid_targets:
+            _publish_log(scan_id, "WARN", "No authorized in-scope targets for exploitation scan.")
+            _update_scan(db, scan_id, "done", 100)
+            return
+
+        _publish_log(scan_id, "INFO", f"Running exploitation engine on {len(valid_targets)} target(s)…")
+        _update_scan(db, scan_id, "running", 20)
+
+        # --- 5. Run exploitation engine ---
+        def log_cb(level: str, msg: str):
+            _publish_log(scan_id, level, msg)
+
+        engine = ExploitationEngine()
+        exploit_results = engine.run_all(
+            targets=valid_targets,
+            enabled_categories=exploit_cats,
+            oob_callback=oob_callback,
+            alternate_token=alternate_token,
+            log=log_cb,
+        )
+
+        _update_scan(db, scan_id, "running", 80)
+        _publish_log(scan_id, "INFO", f"Exploitation complete — {len(exploit_results)} finding(s) raw")
+
+        # --- 6. Persist findings ---
+        saved = 0
+        for er in exploit_results:
+            dedup_key = er.dedup_key
+            existing = db.query(Finding).filter(
+                Finding.program_id == uuid.UUID(program_id),
+                Finding.dedup_key == dedup_key,
+            ).first()
+            if existing:
+                continue
+
+            asset_domain = scope_validator.normalize_target(er.target)
+            asset = db.query(Asset).filter(Asset.domain == asset_domain).first()
+
+            try:
+                sev = Severity(er.severity)
+            except ValueError:
+                sev = Severity.info
+
+            redacted_evidence = evidence_redactor.redact_dict(er.evidence) if er.evidence else {}
+
+            finding = Finding(
+                program_id=uuid.UUID(program_id),
+                asset_id=asset.id if asset else None,
+                name=er.name,
+                category=er.category.value,
+                severity=sev,
+                scanner=er.category.value,
+                scanner_version=None,
+                template_id=None,
+                status=FindingStatus.potential,
+                dedup_key=dedup_key,
+                scope_result={
+                    "target": er.target,
+                    "confidence": er.confidence.value,
+                    "cwe": er.cwe,
+                    "cvss_score": er.cvss_score,
+                    "description": er.description,
+                },
+                raw_output=json.dumps(redacted_evidence),
+            )
+            db.add(finding)
+            db.flush()
+
+            db.add(Evidence(
+                finding_id=finding.id,
+                kind=EvidenceKind.tool_output,
+                content_ref=f"{er.category.value}_output_{finding.id}",
+                sha256=hashlib.sha256(json.dumps(redacted_evidence).encode()).hexdigest(),
+                collected_by=er.category.value,
+            ))
+            saved += 1
+
+        db.commit()
+        _publish_log(scan_id, "INFO", f"Saved {saved} new finding(s) from exploitation scan")
+        _update_scan(db, scan_id, "done", 100)
+
+    except Exception as exc:
+        logger.error(f"Exploitation scan failed: {exc}")
+        _publish_log(scan_id, "ERROR", str(exc))
+        _update_scan(db, scan_id, "failed", 0)
+    finally:
+        db.close()

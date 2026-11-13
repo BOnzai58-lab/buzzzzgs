@@ -211,6 +211,52 @@ class Program(Base):
     findings: Mapped[list["Finding"]] = relationship(
         "Finding", back_populates="program", cascade="all, delete-orphan"
     )
+    authorization_records: Mapped[list["AuthorizationRecord"]] = relationship(
+        "AuthorizationRecord", back_populates="program", cascade="all, delete-orphan"
+    )
+
+
+class AuthorizationRecord(Base):
+    """Formal authorization record — ties a program to proof of permission.
+
+    A target may only enter the active scan queue if its program has a valid,
+    non-expired AuthorizationRecord.  This is enforced by the
+    PolicyEnforcementGateway (§5 of Master Dev Spec).
+    """
+
+    __tablename__ = "authorization_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    program_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("programs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # own_asset / client / bug_bounty / other
+    auth_type: Mapped[str] = mapped_column(String(64), nullable=False, default="bug_bounty")
+    program_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    scope_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    evidence_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Whether staff have independently verified the authorization
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expiry_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # JSON arrays of authorized / excluded domains, IPs, paths
+    authorized_domains: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    excluded_domains: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    authorized_ips: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    authorized_paths: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Program-specific conditions (no-dos, test-accounts-only, etc.)
+    program_conditions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+    # Relationships
+    program: Mapped["Program"] = relationship("Program", back_populates="authorization_records")
 
 
 class ScopeRule(Base):

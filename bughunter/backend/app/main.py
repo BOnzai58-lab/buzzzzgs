@@ -16,6 +16,8 @@ from app.api.batches import router as batches_router
 from app.api.jobs import router as jobs_router
 from app.api.schedules import router as schedules_router
 from app.api.workers import router as workers_router
+from app.api.authorizations import router as authorizations_router
+from app.api.policies import router as policies_router
 
 app = FastAPI(
     title="BugHunter AI",
@@ -44,6 +46,8 @@ app.include_router(batches_router, prefix=PREFIX)
 app.include_router(jobs_router, prefix=PREFIX)
 app.include_router(schedules_router, prefix=PREFIX)
 app.include_router(workers_router, prefix=PREFIX)
+app.include_router(authorizations_router, prefix=PREFIX)
+app.include_router(policies_router, prefix=PREFIX)
 
 
 @app.on_event("startup")

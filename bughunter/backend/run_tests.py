@@ -352,6 +352,220 @@ def main():
     check("Admin role permitted across all resources", admin_ok)
 
     # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 12] Policy Enforcement Gateway (§4, §5.3)")
+    # ─────────────────────────────────────────────────────────────────
+    from app.services.enforcement_gateway import (
+        PolicyEnforcementGateway, GatewayDecision, AuthorizationRecord as GWAuthRecord,
+    )
+    from app.services.policy_manager import PolicyManager, PolicyDefinition, TestCategory, ScanProfile
+
+    gw = PolicyEnforcementGateway()
+
+    # Build a valid auth record
+    valid_auth = GWAuthRecord(
+        authorized_domains=["example.com"],
+        excluded_domains=[],
+        expiry_date=None,
+        is_active=True,
+    )
+
+    pm = PolicyManager()
+    standard_policy = pm.compute_effective_policy(global_policy=PolicyDefinition(profile=ScanProfile.STANDARD))
+
+    # DoS is always blocked regardless of auth/policy
+    dos_result = gw.authorize_action("dos", "https://example.com", authorization=valid_auth, effective_policy=standard_policy)
+    check("Gateway hard-blocks DoS action", dos_result.decision == GatewayDecision.BLOCKED_DOS_HARDCODED)
+
+    # DDoS variant also blocked
+    ddos_result = gw.authorize_action("ddos", "https://example.com", authorization=valid_auth)
+    check("Gateway hard-blocks DDoS action", ddos_result.decision == GatewayDecision.BLOCKED_DOS_HARDCODED)
+
+    # Category 'dos' also blocked
+    cat_dos = gw.authorize_action("flood_test", "https://example.com", category="dos", authorization=valid_auth)
+    check("Gateway hard-blocks category=dos", cat_dos.decision == GatewayDecision.BLOCKED_DOS_HARDCODED)
+
+    # No auth → blocked
+    no_auth = gw.authorize_action("sqli_scan", "https://example.com", authorization=None)
+    check("Gateway blocks action with no authorization", no_auth.decision == GatewayDecision.BLOCKED_NO_AUTHORIZATION)
+
+    # Expired auth → blocked
+    from datetime import timedelta
+    expired_auth = GWAuthRecord(
+        authorized_domains=["example.com"],
+        excluded_domains=[],
+        expiry_date=datetime.now(timezone.utc) - timedelta(days=1),
+        is_active=True,
+    )
+    expired_result = gw.authorize_action("sqli_scan", "https://example.com", authorization=expired_auth)
+    check("Gateway blocks action with expired authorization", expired_result.decision == GatewayDecision.BLOCKED_AUTHORIZATION_EXPIRED)
+
+    # Inactive auth → blocked
+    inactive_auth = GWAuthRecord(authorized_domains=["example.com"], is_active=False)
+    inactive_result = gw.authorize_action("sqli_scan", "https://example.com", authorization=inactive_auth)
+    check("Gateway blocks action with inactive authorization", inactive_result.decision == GatewayDecision.BLOCKED_NO_AUTHORIZATION)
+
+    # Valid auth + valid policy → allowed
+    allowed = gw.authorize_action(
+        "sqli_scan", "https://example.com",
+        category="sqli",
+        authorization=valid_auth,
+        effective_policy=standard_policy,
+    )
+    check("Gateway allows valid authorized scan action", allowed.allowed)
+
+    # Excluded domain → blocked
+    excl_auth = GWAuthRecord(
+        authorized_domains=["example.com"],
+        excluded_domains=["admin.example.com"],
+        is_active=True,
+    )
+    excl_result = gw.authorize_action("probe", "https://admin.example.com/login", authorization=excl_auth)
+    check("Gateway blocks excluded domain", excl_result.decision == GatewayDecision.BLOCKED_OUT_OF_SCOPE)
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 13] Authorization Record Validation (§5)")
+    # ─────────────────────────────────────────────────────────────────
+
+    # AuthorizationRecord fields
+    ar = GWAuthRecord(
+        authorized_domains=["example.com", "*.example.com"],
+        authorized_ips=["192.168.1.0/24"],
+        excluded_domains=["billing.example.com"],
+        expiry_date=datetime.now(timezone.utc) + timedelta(days=365),
+        is_active=True,
+    )
+    check("AuthorizationRecord stores authorized_domains", "example.com" in ar.authorized_domains)
+    check("AuthorizationRecord stores authorized_ips", len(ar.authorized_ips) == 1)
+    check("AuthorizationRecord stores excluded_domains", "billing.example.com" in ar.excluded_domains)
+    check("AuthorizationRecord is_active defaults True", ar.is_active is True)
+
+    # Active + future expiry → not expired in gateway
+    future_auth = GWAuthRecord(
+        authorized_domains=["example.com"],
+        expiry_date=datetime.now(timezone.utc) + timedelta(days=30),
+        is_active=True,
+    )
+    future_result = gw.authorize_action("probe", "https://example.com", authorization=future_auth)
+    check("Future expiry auth is not blocked as expired", future_result.decision != GatewayDecision.BLOCKED_AUTHORIZATION_EXPIRED)
+
+    # Expiry exactly now-1s → expired
+    just_expired = GWAuthRecord(
+        authorized_domains=["example.com"],
+        expiry_date=datetime.now(timezone.utc) - timedelta(seconds=1),
+        is_active=True,
+    )
+    just_exp_result = gw.authorize_action("probe", "https://example.com", authorization=just_expired)
+    check("Auth expired 1 second ago is rejected", just_exp_result.decision == GatewayDecision.BLOCKED_AUTHORIZATION_EXPIRED)
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 14] Exploitation Engine Safety (§11)")
+    # ─────────────────────────────────────────────────────────────────
+    from app.services.exploitation_engine import (
+        ExploitationEngine, ExploitCategory, ExploitResult, ExploitConfidence,
+        SQLiAdapter, XSSAdapter, IDORAdapter,
+    )
+
+    engine = ExploitationEngine()
+
+    # Engine has all expected adapters
+    check("ExploitationEngine has SQLi adapter", hasattr(engine, "sqli"))
+    check("ExploitationEngine has XSS adapter", hasattr(engine, "xss"))
+    check("ExploitationEngine has SSRF adapter", hasattr(engine, "ssrf"))
+    check("ExploitationEngine has IDOR adapter", hasattr(engine, "idor"))
+    check("ExploitationEngine has content_disc adapter", hasattr(engine, "content_disc"))
+    check("ExploitationEngine has auth_bypass adapter", hasattr(engine, "auth_bypass"))
+    check("ExploitationEngine has ssti adapter", hasattr(engine, "ssti"))
+    check("ExploitationEngine has file_upload adapter", hasattr(engine, "file_upload"))
+    check("ExploitationEngine has biz_logic adapter", hasattr(engine, "biz_logic"))
+
+    # DoS is never in ExploitCategory
+    dos_in_cats = any("dos" in c.value.lower() or "ddos" in c.value.lower() for c in ExploitCategory)
+    check("ExploitCategory contains no DoS variant", not dos_in_cats)
+
+    # ExploitResult dedup_key is deterministic
+    r1 = ExploitResult(ExploitCategory.SQLI, "https://example.com/login", "SQL Injection", "high", ExploitConfidence.CONFIRMED, "desc")
+    r2 = ExploitResult(ExploitCategory.SQLI, "https://example.com/login", "SQL Injection", "high", ExploitConfidence.CONFIRMED, "desc2")
+    check("ExploitResult dedup_key is set post-init", bool(r1.dedup_key))
+    check("ExploitResult identical target+category+name → same dedup_key", r1.dedup_key == r2.dedup_key)
+
+    # SQLiAdapter safe args never include destructive flags
+    sqli = SQLiAdapter()
+    sqli_args_joined = " ".join(sqli.SAFE_ARGS)
+    check("SQLiAdapter SAFE_ARGS excludes --sql-shell", "--sql-shell" not in sqli_args_joined)
+    check("SQLiAdapter SAFE_ARGS excludes --os-cmd", "--os-cmd" not in sqli_args_joined)
+    check("SQLiAdapter SAFE_ARGS excludes --os-shell", "--os-shell" not in sqli_args_joined)
+    check("SQLiAdapter SAFE_ARGS excludes --file-write", "--file-write" not in sqli_args_joined)
+    check("SQLiAdapter includes --batch for non-interactive mode", "--batch" in sqli_args_joined)
+    check("SQLiAdapter includes --no-logging", "--no-logging" in sqli_args_joined)
+
+    # IDORAdapter _adjacent_ids
+    idor = IDORAdapter()
+    adj = idor._adjacent_ids("https://api.example.com/users/42/profile")
+    check("IDORAdapter generates adjacent ID probes", len(adj) > 0)
+    check("IDORAdapter caps probes at 6", len(adj) <= 6)
+    # Ensure no UUID-based adjacent IDs generated for UUID path (no numeric match)
+    no_adj = idor._adjacent_ids("https://api.example.com/users/profile")
+    check("IDORAdapter returns no probes for path without numeric ID", len(no_adj) == 0)
+
+    # run_all with empty targets returns []
+    empty_results = engine.run_all(targets=[], enabled_categories={ExploitCategory.SQLI}, log=lambda l, m: None)
+    check("run_all with no targets returns empty list", empty_results == [])
+
+    # ─────────────────────────────────────────────────────────────────
+    print("\n[Suite 15] Queue Authorization Enforcement (§7)")
+    # ─────────────────────────────────────────────────────────────────
+
+    # Simulate the gateway rejecting a target when no auth exists
+    gw2 = PolicyEnforcementGateway()
+
+    # No auth record → entire queue entry must be blocked
+    queue_target = "https://target.example.com/api/login"
+    no_auth_result = gw2.authorize_action(
+        action_type="exploitation_scan",
+        target=queue_target,
+        category="sqli",
+        authorization=None,
+    )
+    check("Queue: target without auth record is blocked from scanning", not no_auth_result.allowed)
+    check("Queue: block reason is BLOCKED_NO_AUTHORIZATION", no_auth_result.decision == GatewayDecision.BLOCKED_NO_AUTHORIZATION)
+
+    # With a valid auth record → allowed through
+    q_auth = GWAuthRecord(authorized_domains=["target.example.com"], is_active=True)
+    q_policy = pm.compute_effective_policy(global_policy=PolicyDefinition())
+    q_result = gw2.authorize_action(
+        action_type="exploitation_scan",
+        target=queue_target,
+        category="sqli",
+        authorization=q_auth,
+        effective_policy=q_policy,
+    )
+    check("Queue: target with valid auth record is allowed", q_result.allowed)
+
+    # Category disabled in policy → blocked
+    from app.services.policy_manager import ScanProfile
+    passive_policy = pm.compute_effective_policy(global_policy=PolicyDefinition(profile=ScanProfile.PASSIVE))
+    q_xss_result = gw2.authorize_action(
+        action_type="xss_probe",
+        target=queue_target,
+        category="xss",
+        authorization=q_auth,
+        effective_policy=passive_policy,
+    )
+    check("Queue: XSS blocked under PASSIVE profile", not q_xss_result.allowed)
+    check("Queue: block decision is BLOCKED_CATEGORY_DISABLED", q_xss_result.decision == GatewayDecision.BLOCKED_CATEGORY_DISABLED)
+
+    # DoS always blocked even with valid auth and EXTENDED policy
+    extended_policy = pm.compute_effective_policy(global_policy=PolicyDefinition(profile=ScanProfile.EXTENDED))
+    q_dos = gw2.authorize_action(
+        action_type="dos",
+        target=queue_target,
+        authorization=q_auth,
+        effective_policy=extended_policy,
+    )
+    check("Queue: DoS always blocked even with EXTENDED policy + valid auth", not q_dos.allowed)
+    check("Queue: DoS block is BLOCKED_DOS_HARDCODED", q_dos.decision == GatewayDecision.BLOCKED_DOS_HARDCODED)
+
+    # ─────────────────────────────────────────────────────────────────
     print("\n" + "=" * 65)
     print(f"Results: \033[32m{passed} passed\033[0m, \033[31m{failed} failed\033[0m")
     print("=" * 65)

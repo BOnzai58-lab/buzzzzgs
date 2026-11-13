@@ -32,8 +32,16 @@ class TestCategory(str, Enum):
     ACCESS_CONTROL = "access_control"
     XSS = "xss"
     SSRF_SAFE = "ssrf_safe"
+    SSRF = "ssrf"
     FILE_HANDLING_SAFE = "file_handling_safe"
+    FILE_UPLOAD = "file_upload"
     INFO_DISCLOSURE = "info_disclosure"
+    SQLI = "sqli"
+    INJECTION = "injection"
+    IDOR = "idor"
+    AUTH_BYPASS = "auth_bypass"
+    SSTI = "ssti"
+    BUSINESS_LOGIC = "business_logic"
 
 
 class RestrictedOperation(str, Enum):
@@ -74,7 +82,15 @@ PROFILE_CAPABILITIES: dict[ScanProfile, set[TestCategory]] = {
         TestCategory.ACCESS_CONTROL,
         TestCategory.XSS,
         TestCategory.SSRF_SAFE,
+        TestCategory.SSRF,
         TestCategory.FILE_HANDLING_SAFE,
+        TestCategory.FILE_UPLOAD,
+        TestCategory.SQLI,
+        TestCategory.INJECTION,
+        TestCategory.IDOR,
+        TestCategory.AUTH_BYPASS,
+        TestCategory.SSTI,
+        TestCategory.BUSINESS_LOGIC,
     },
     ScanProfile.EXTENDED: set(TestCategory),
 }
@@ -287,6 +303,9 @@ class PolicyManager:
             version=version,
             custom_exclusions=exclusions,
         )
+
+    # Alias for method compatibility
+    compute_effective_policy = resolve_effective_policy
 
 
 policy_manager = PolicyManager()
