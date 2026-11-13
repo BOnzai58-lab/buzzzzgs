@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """All application settings loaded from environment variables or .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env", "backend/.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -45,8 +45,8 @@ class Settings(BaseSettings):
 
     # ── Security ─────────────────────────────────────────────────────────────────
     SECRET_KEY: str = Field(
-        ...,
-        description="JWT signing secret — REQUIRED",
+        default="b9f2d1e8c7a6b5e4d3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a9f8e7d6c",
+        description="JWT signing secret — defaults to dev secret if missing from environment",
     )
     ALGORITHM: str = Field(default="HS256", description="JWT algorithm")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(

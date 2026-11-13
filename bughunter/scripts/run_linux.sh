@@ -35,6 +35,23 @@ else
     fi
 fi
 
+# Ensure backend/.env exists (copy from root .env or .env.example if missing)
+if [ ! -f "backend/.env" ]; then
+    if [ -f ".env" ]; then
+        echo "[*] Synchronizing root .env to backend/.env..."
+        cp .env backend/.env
+    elif [ -f "../.env" ]; then
+        echo "[*] Synchronizing parent .env to backend/.env..."
+        cp ../.env backend/.env
+    elif [ -f "backend/.env.example" ]; then
+        echo "[*] Creating backend/.env from backend/.env.example..."
+        cp backend/.env.example backend/.env
+    elif [ -f ".env.example" ]; then
+        echo "[*] Creating backend/.env from .env.example..."
+        cp .env.example backend/.env
+    fi
+fi
+
 # Ensure database tables exist
 backend/.venv/bin/python -c "import asyncio; from app.core.database import create_all_tables; asyncio.run(create_all_tables())" 2>/dev/null || true
 
