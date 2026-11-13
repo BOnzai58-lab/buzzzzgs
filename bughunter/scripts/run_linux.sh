@@ -64,6 +64,12 @@ elif [ -f ".env" ]; then
 fi
 export SECRET_KEY="${SECRET_KEY:-b9f2d1e8c7a6b5e4d3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a9f8e7d6c}"
 
+# If DATABASE_URL is unset or points to Docker host 'db', use local SQLite for standalone host execution
+if [ -z "$DATABASE_URL" ] || echo "$DATABASE_URL" | grep -q "@db:"; then
+    export DATABASE_URL="sqlite+aiosqlite:///./bughunter.db"
+    export SYNC_DATABASE_URL="sqlite:///./bughunter.db"
+fi
+
 # Ensure database tables exist
 backend/.venv/bin/python -c "import asyncio; from app.core.database import create_all_tables; asyncio.run(create_all_tables())" 2>/dev/null || true
 

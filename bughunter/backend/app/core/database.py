@@ -15,8 +15,10 @@ from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
 # ── Engine ────────────────────────────────────────────────────────────────────
-engine_kwargs = {"echo": settings.DEBUG}
-if not settings.DATABASE_URL.startswith("sqlite"):
+engine_kwargs: dict[str, Any] = {"echo": settings.DEBUG}
+if settings.DATABASE_URL.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
     engine_kwargs.update({
         "pool_size": 10,
         "max_overflow": 20,
@@ -63,6 +65,9 @@ async def create_all_tables() -> None:
     import app.models.all  # noqa: F401
     import app.models.batch  # noqa: F401
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables created / verified.")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables created / verified.")
+    except Exception as exc:
+        logger.warning(f"Database table verification deferred/warning: {exc}")

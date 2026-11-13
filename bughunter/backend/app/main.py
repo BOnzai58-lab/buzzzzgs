@@ -53,7 +53,10 @@ app.include_router(policies_router, prefix=PREFIX)
 @app.on_event("startup")
 async def startup():
     logger.info("Starting BugHunter AI backend...")
-    await create_tables()
+    try:
+        await create_tables()
+    except Exception as exc:
+        logger.warning(f"Database table verification encountered an issue (non-fatal): {exc}")
     logger.info(f"AI proxy: {settings.AI_BASE_URL} model: {settings.AI_MODEL}")
     logger.info("Backend ready.")
 

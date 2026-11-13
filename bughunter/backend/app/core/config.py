@@ -20,26 +20,26 @@ class Settings(BaseSettings):
 
     # ── Database ────────────────────────────────────────────────────────────────
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://bughunter:bughunter@db:5432/bughunter",
-        description="Async PostgreSQL connection string",
+        default="sqlite+aiosqlite:///./bughunter.db",
+        description="Async database connection string (SQLite for standalone local dev, PostgreSQL for Docker)",
     )
-    # Sync URL used by Alembic (psycopg2)
+    # Sync URL used by Alembic (psycopg2) or SQLite
     SYNC_DATABASE_URL: str = Field(
-        default="postgresql+psycopg2://bughunter:bughunter@db:5432/bughunter",
-        description="Sync PostgreSQL connection string for Alembic",
+        default="sqlite:///./bughunter.db",
+        description="Sync database connection string",
     )
 
     # ── Redis / Celery ───────────────────────────────────────────────────────────
     REDIS_URL: str = Field(
-        default="redis://redis:6379/0",
+        default="redis://localhost:6379/0",
         description="Redis connection URL",
     )
     CELERY_BROKER_URL: str = Field(
-        default="redis://redis:6379/1",
+        default="redis://localhost:6379/1",
         description="Celery broker URL",
     )
     CELERY_RESULT_BACKEND: str = Field(
-        default="redis://redis:6379/2",
+        default="redis://localhost:6379/2",
         description="Celery result backend URL",
     )
 
@@ -78,10 +78,10 @@ class Settings(BaseSettings):
 
     # ── Evidence / Report storage ────────────────────────────────────────────────
     EVIDENCE_DIR: str = Field(
-        default="/data/evidence", description="Root directory for evidence files"
+        default="./data/evidence", description="Root directory for evidence files (safe local path)"
     )
     REPORT_DIR: str = Field(
-        default="/data/reports", description="Root directory for report PDF files"
+        default="./data/reports", description="Root directory for report PDF files (safe local path)"
     )
 
     # ── Scan defaults ────────────────────────────────────────────────────────────
