@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password, create_access_token, get_current_user, require_role
-from app.models.all import User
+from app.models.all import User, UserRole
 from app.schemas import Token, UserCreate, UserResponse, UserRoleUpdate
 from app.audit.logger import audit
 
@@ -18,7 +18,8 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = 
     user = result.scalar_one_or_none()
     if not user or not verify_password(form.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
-    token = create_access_token(subject=str(user.id), extra_claims={"role": user.role})
+    role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+    token = create_access_token(subject=str(user.id), extra_claims={"role": role_str})
     return Token(access_token=token)
 
 
@@ -39,10 +40,11 @@ async def register(body: UserCreate, db: AsyncSession = Depends(get_db)):
     user = User(
         email=body.email,
         password_hash=hash_password(body.password),
-        role="admin" if is_first else "analyst",
+        role=UserRole.admin if is_first else UserRole.analyst,
     )
     db.add(user)
-    await db.flush()
+    await db.commit()
+    await db.refresh(user)
     return user
 
 
