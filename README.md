@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white" alt="Vite" />
   <img src="https://img.shields.io/badge/TailwindCSS-v4-38B2AC?logo=tailwindcss&logoColor=white" alt="Tailwind v4" />
   <img src="https://img.shields.io/badge/Kali_Linux-Ready-557C94?logo=kalilinux&logoColor=white" alt="Kali Linux Ready" />
-  <img src="https://img.shields.io/badge/Tests-82%20Passed%20(100%25)-brightgreen" alt="Tests 82 Passed" />
+  <img src="https://img.shields.io/badge/Tests-125%20Passed%20(100%25)-brightgreen" alt="Tests 125 Passed" />
   <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License" />
 </p>
 
@@ -20,8 +20,23 @@
 
 ## 🚀 Latest Updates: Master Development Specification Implementation
 
-In response to the Technical Review Report and the Master Development Specification, BugHunter AI has implemented the full security and planning framework:
+In response to the Technical Review Report and the Master Development Specification (v2), BugHunter AI has implemented the full autonomous exploitation and policy enforcement framework:
 
+- **⚡ Exploitation Engine (§11)**: Real, attacker-mindset exploitation checks across major vulnerability classes using dedicated safe adapters:
+  - **SQL Injection**: `sqlmap` in non-destructive batch mode (`--level=2 --risk=1 --technique=BEUST --no-logging`), strictly excluding destructive options (`--sql-shell`, `--os-cmd`, `--file-write`).
+  - **Cross-Site Scripting (XSS)**: `dalfox` reflected PoC probes (`--only-poc r --no-mining-dom-xss`).
+  - **SSRF**: `nuclei` SSRF templates with DoS/fuzzing tags strictly excluded.
+  - **IDOR / BOLA**: Heuristic adjacent-ID probing and unauthenticated access checks against discovered API endpoints.
+  - **Content Discovery**: `ffuf` automated directory and sensitive path enumeration with rate-limiting.
+  - **Auth Bypass & SSTI**: Dedicated Nuclei template suites for default credentials, auth bypass, and template injection.
+  - **Business Logic**: Heuristic parameter tampering checks (e.g. price, quantity, role parameters).
+- **🛡️ Policy Enforcement Gateway (§4, §5.3)**: Central deterministic checkpoint validating every outbound network action. Checks target scope, authorization validity, rate limits, and test category allowances. **DoS/DDoS and stress-testing are permanently prohibited under every configuration.**
+- **📜 Authorization Registry (§5.1)**: Dedicated `AuthorizationRecord` entity tracking engagement types (`bug_bounty`, `own_asset`, `client`), scope URLs, authorized domains/CIDRs, exclusions, and expiration dates. Expired authorizations automatically freeze active testing.
+- **🌐 Universal Cross-Platform Stability & Crash-Proof Runtime**:
+  - Default zero-configuration SQLite backend (`sqlite+aiosqlite:///./bughunter.db`) allowing immediate standalone startup on Kali Linux, Ubuntu, macOS, and Windows without requiring external PostgreSQL setup.
+  - Dynamic multi-path `.env` resolution (`.env`, `../.env`, `backend/.env`) with a development fallback for `SECRET_KEY`.
+  - Permission-safe local storage directories (`./data/evidence`, `./data/reports`) preventing filesystem permission crashes.
+  - One-click launchers for both Linux (`scripts/run_linux.sh`) and Windows (`scripts/run_windows.ps1`).
 - **🧠 Adaptive Assessment Planner (§9)**: Intelligent 10-step planning cycle that analyzes discovered asset inventory (CMS fingerprinting, API route discovery, client-side JS analysis, login/session inspection, file-handling endpoints, and parameters) to propose targeted, non-destructive checks. Status is tracked per §9.3 (`planned`, `running`, `passed`, `potential`, `verified`, `skipped_by_policy`, `blocked_by_scope`, `unsupported`, `failed`).
 - **📋 Scan Limitation & Policy Manager (§6)**: Hierarchical server-side policy inheritance (`Global -> Program -> Target`) with strictest-rule conflict resolution. Supports scan profiles (`passive`, `low_impact`, `standard`, `extended`), rate limits (RPS, concurrency caps), and permanent blocks on prohibited operations (DoS, destructive payloads, brute force).
 - **🔒 Evidence Secret Redaction Service (§12.1)**: Comprehensive sanitization of sensitive tokens (`Authorization: Bearer`, session cookies, passwords, JWTs, AWS keys, PEM private keys) in raw requests, raw responses, reproducible curl commands, and generated reports while preserving cryptographic proof and structural integrity.
@@ -36,7 +51,7 @@ In response to the Technical Review Report and the Master Development Specificat
 - **🔍 Verification Engine & Status Gating (§1.3, §4.4)**: New `VerificationEngine` performs safe, non-destructive HTTP verification checks with reproducible `curl` generation and SHA-256 evidence hashing.
 - **🔐 WebSocket Ownership Authorization (§1.4)**: Real-time scan log subscriptions validate JWTs and enforce user-to-scan ownership or admin roles.
 - **📄 Evidence-Grounded Reporting (§1.5, §4.6)**: Reports are strictly generated as **DRAFT — HUMAN REVIEW REQUIRED** with authentic HTTP artifacts, CVSS v3.1 calculations (never fabricated), and complete researcher checklists.
-- **🧪 82-Test Automated Suite (§2.4, §6, §18)**: Built and verified `run_tests.py` covering scope validation, process tracking, verification engine, report generation, privilege escalation defense, batch execution integrity, evidence secret redaction, policy manager inheritance, adaptive assessment planner, tool compatibility, and resource-level access control with **100% test pass rate**.
+- **🧪 125-Test Automated Suite (§2.4, §6, §18)**: Built and verified `run_tests.py` across 15 complete test suites with a **100% test pass rate (125 passed, 0 failed)**.
 
 ---
 

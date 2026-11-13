@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # BugHunter AI — Windows Runtime Launcher
 # ==============================================================================
 $ErrorActionPreference = "Continue"
@@ -49,3 +49,4 @@ try {
     if ($backendProcess -and -not $backendProcess.HasExited) { Stop-Process -Id $backendProcess.Id -Force }
     if ($frontendProcess -and -not $frontendProcess.HasExited) { Stop-Process -Id $frontendProcess.Id -Force }
 }
+

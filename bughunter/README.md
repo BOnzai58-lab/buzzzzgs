@@ -7,6 +7,10 @@
 
 ## 🚀 Latest Updates: Master Development Specification Implementation
 
+- **Exploitation Engine (§11)**: Real, attacker-mindset checks across SQL Injection (`sqlmap`), XSS (`dalfox`), SSRF (`nuclei`), IDOR/BOLA, Content Discovery (`ffuf`), Auth Bypass, and SSTI with safe, non-destructive flags.
+- **Policy Enforcement Gateway (§4, §5.3)**: Central deterministic checkpoint validating scope, authorization, rate limits, and permanently prohibiting DoS/stress testing under all configurations.
+- **Authorization Records Registry (§5.1)**: Dedicated `AuthorizationRecord` model and API endpoints tracking scope URLs, authorized assets, and expiration dates.
+- **Universal Cross-Platform Stability**: Default zero-config SQLite database (`sqlite+aiosqlite:///./bughunter.db`), user-safe paths (`./data/evidence`), auto `.env` sync, and launchers for Linux (`scripts/run_linux.sh`) and Windows (`scripts/run_windows.ps1`).
 - **Adaptive Assessment Planner (§9)**: Intelligent 10-step assessment cycle generating candidate checks based on discovered assets (CMS detection, API route inventory, client-side JS analysis, login/session inspection, file-handling, and parameter validation) with §9.3 status tracking (`planned`, `running`, `passed`, `potential`, `verified`, `skipped_by_policy`, `blocked_by_scope`, `unsupported`, `failed`).
 - **Scan Limitation & Policy Manager (§6)**: Hierarchical server-side policy inheritance (`Global -> Program -> Target`) with conflict resolution favoring stricter rules. Supports scan profiles (`passive`, `low_impact`, `standard`, `extended`), rate limits (RPS, concurrency), and permanent blocks on prohibited attack operations (DoS, destructive payloads, brute force).
 - **Evidence Secret Redaction Service (§12.1)**: Comprehensive sanitization of sensitive tokens (`Authorization: Bearer`, session cookies, passwords, JWTs, AWS keys, PEM private keys) in raw requests, raw responses, reproducible curl commands, and generated reports while preserving cryptographic proof and structural integrity.
@@ -23,7 +27,7 @@
 - **Strict Verification Gating**: Transitioning findings to `verified` requires an impact note ($\ge$ 10 chars), confirmed scope, reproducible test, and real HTTP evidence.
 - **WebSocket Ownership Check (§1.4)**: Ensures non-admin users only receive streaming logs for scans they started.
 - **Evidence-Grounded Reports (§1.5, §4.6)**: All reports are generated as `DRAFT — HUMAN REVIEW REQUIRED` with cryptographic evidence hashes.
-- **Automated Test Suite (§2.4, §6, §18)**: 82 automated unit and integration tests passing at 100% via `python run_tests.py`.
+- **Automated Test Suite (§2.4, §6, §18)**: 125 automated unit and integration tests passing at 100% via `python run_tests.py`.
 
 ---
 
