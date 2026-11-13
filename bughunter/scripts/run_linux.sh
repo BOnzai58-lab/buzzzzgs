@@ -52,6 +52,18 @@ if [ ! -f "backend/.env" ]; then
     fi
 fi
 
+# Load environment variables into shell and ensure SECRET_KEY fallback
+if [ -f "backend/.env" ]; then
+    set -a
+    source backend/.env 2>/dev/null || true
+    set +a
+elif [ -f ".env" ]; then
+    set -a
+    source .env 2>/dev/null || true
+    set +a
+fi
+export SECRET_KEY="${SECRET_KEY:-b9f2d1e8c7a6b5e4d3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a9f8e7d6c}"
+
 # Ensure database tables exist
 backend/.venv/bin/python -c "import asyncio; from app.core.database import create_all_tables; asyncio.run(create_all_tables())" 2>/dev/null || true
 
